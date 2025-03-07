@@ -4,13 +4,24 @@ This module provides configuration classes for the Azure AI Search tool, includi
 settings for authentication, search behavior, retry policies, and caching.
 """
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 import logging
 
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from pydantic import BaseModel, Field, model_validator
 
-T = TypeVar('T', bound='AzureAISearchConfig')
+T = TypeVar("T", bound="AzureAISearchConfig")
 
 logger = logging.getLogger(__name__)
 

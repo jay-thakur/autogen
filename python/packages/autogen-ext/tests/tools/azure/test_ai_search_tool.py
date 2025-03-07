@@ -8,33 +8,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from autogen_core import CancellationToken, ComponentModel
 
-src_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../../src")
-)
+# Add the source directory to the Python path
+src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 sys.path.insert(0, src_dir)
 
 source_dir = os.path.join(src_dir, "autogen_ext", "tools", "azure")
 ai_search_path = os.path.join(source_dir, "_ai_search.py")
 config_path = os.path.join(source_dir, "_config.py")
 
+# Ensure directory exists
 os.makedirs(source_dir, exist_ok=True)
 init_file = os.path.join(source_dir, "__init__.py")
 if not os.path.exists(init_file):
     with open(init_file, "w") as f:
         pass
 
+# Import modules dynamically
 spec_ai_search = importlib.util.spec_from_file_location(
     "ai_search_module", ai_search_path
 )
 ai_search_module = importlib.util.module_from_spec(spec_ai_search)
 spec_ai_search.loader.exec_module(ai_search_module)
 
-spec_config = importlib.util.spec_from_file_location(
-    "config_module", config_path
-)
+spec_config = importlib.util.spec_from_file_location("config_module", config_path)
 config_module = importlib.util.module_from_spec(spec_config)
 spec_config.loader.exec_module(config_module)
 
+# Import classes
 AzureAISearchTool = ai_search_module.AzureAISearchTool
 SearchQuery = ai_search_module.SearchQuery
 SearchResult = ai_search_module.SearchResult
@@ -131,10 +131,7 @@ def test_tool_properties(test_config: ComponentModel) -> None:
         assert tool.search_config.api_version == "2023-10-01-Preview"
         assert tool.search_config.query_type == "simple"
         assert tool.search_config.search_fields == ["content", "title"]
-        assert (
-            tool.search_config.select_fields
-            == ["id", "content", "title", "source"]
-        )
+        assert tool.search_config.select_fields == ["id", "content", "title", "source"]
         assert tool.search_config.top == 5
 
 
@@ -144,9 +141,7 @@ def test_component_base_class(test_config: ComponentModel) -> None:
         tool = AzureAISearchTool.load_component(test_config)
         assert tool.dump_component() is not None
         assert (
-            AzureAISearchTool.load_component(
-                tool.dump_component(), AzureAISearchTool
-            )
+            AzureAISearchTool.load_component(tool.dump_component(), AzureAISearchTool)
             is not None
         )
 
@@ -192,7 +187,7 @@ async def test_simple_search(test_config: ComponentModel) -> None:
                 assert "score" in result
                 assert "content" in result
                 assert "metadata" in result
-                
+
             assert results[0]["score"] == 0.95
             assert results[0]["content"]["id"] == "doc1"
             assert results[0]["content"]["title"] == "Document 1"
@@ -212,9 +207,7 @@ async def test_semantic_search(semantic_config: ComponentModel) -> None:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        mock_client.search = AsyncMock(
-            return_value=AsyncIterator(MOCK_SEARCH_RESPONSE)
-        )
+        mock_client.search = AsyncMock(return_value=AsyncIterator(MOCK_SEARCH_RESPONSE))
 
         with patch.object(tool, "_get_client", return_value=mock_client):
             await tool.run_json({"query": "test query"}, CancellationToken())
@@ -223,10 +216,7 @@ async def test_semantic_search(semantic_config: ComponentModel) -> None:
 
             assert args[0] == "test query"
             assert kwargs.get("query_type") == "semantic"
-            assert (
-                kwargs.get("semantic_configuration_name")
-                == "test-semantic-config"
-            )
+            assert kwargs.get("semantic_configuration_name") == "test-semantic-config"
 
 
 @pytest.mark.asyncio
@@ -236,9 +226,7 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
         tool = AzureAISearchTool.load_component(vector_config)
 
         mock_client_instance = MagicMock()
-        mock_client_instance.__aenter__ = AsyncMock(
-            return_value=mock_client_instance
-        )
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_client_instance.__aexit__ = AsyncMock(return_value=None)
 
         mock_client = MagicMock(return_value=mock_client_instance)
@@ -264,17 +252,13 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
             ]
 
             mock_client_instance.search = AsyncMock()
-            mock_client_instance.search.return_value = AsyncIterator(
-                mock_results
-            )
+            mock_client_instance.search.return_value = AsyncIterator(mock_results)
 
             mock_client.return_value = mock_client_instance
             with patch.object(
                 tool, "_get_client", return_value=mock_client.return_value
             ):
-                await tool.run_json(
-                    {"query": "test query"}, CancellationToken()
-                )
+                await tool.run_json({"query": "test query"}, CancellationToken())
                 mock_client_instance.search.assert_called_once()
                 args, kwargs = mock_client_instance.search.call_args
                 assert args[0] == ""  # Empty string for vector search
@@ -284,9 +268,7 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
 
 
 @pytest.mark.asyncio
-async def test_error_handling_resource_not_found(
-    test_config: ComponentModel
-) -> None:
+async def test_error_handling_resource_not_found(test_config: ComponentModel) -> None:
     """Test that the tool correctly handles resource not found errors."""
     with patch("azure.search.documents.aio.SearchClient"):
         tool = AzureAISearchTool.load_component(test_config)
@@ -299,9 +281,7 @@ async def test_error_handling_resource_not_found(
 
         with patch.object(tool, "_get_client", return_value=mock_client):
             with pytest.raises(Exception) as excinfo:
-                await tool.run_json(
-                    {"query": "test query"}, CancellationToken()
-                )
+                await tool.run_json({"query": "test query"}, CancellationToken())
 
             assert "not found" in str(excinfo.value).lower()
 
@@ -315,9 +295,7 @@ async def test_cancellation(test_config: ComponentModel) -> None:
 
     mock_client.search = AsyncMock(return_value=AsyncIterator([]))
 
-    with patch(
-        "azure.search.documents.aio.SearchClient", return_value=mock_client
-    ):
+    with patch("azure.search.documents.aio.SearchClient", return_value=mock_client):
         tool = AzureAISearchTool.load_component(test_config)
 
         token = CancellationToken()
@@ -335,26 +313,13 @@ def test_config_serialization(test_config: ComponentModel) -> None:
         config = tool.dump_component()
 
         assert config.config["name"] == test_config.config["name"]
-        assert (
-            config.config["description"] == test_config.config["description"]
-        )
-        assert (
-            config.config["endpoint"] == test_config.config["endpoint"]
-        )
+        assert config.config["description"] == test_config.config["description"]
+        assert config.config["endpoint"] == test_config.config["endpoint"]
         assert config.config["index_name"] == test_config.config["index_name"]
-        assert (
-            config.config["api_version"] == test_config.config["api_version"]
-        )
-        assert (
-            config.config["query_type"] == test_config.config["query_type"]
-        )
-        assert (
-            config.config["search_fields"] == test_config.config["search_fields"]
-        )
-        assert (
-            config.config["select_fields"]
-            == test_config.config["select_fields"]
-        )
+        assert config.config["api_version"] == test_config.config["api_version"]
+        assert config.config["query_type"] == test_config.config["query_type"]
+        assert config.config["search_fields"] == test_config.config["search_fields"]
+        assert config.config["select_fields"] == test_config.config["select_fields"]
         assert config.config["top"] == test_config.config["top"]
 
 
@@ -383,12 +348,8 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    mock_client.search = AsyncMock(
-        return_value=AsyncIterator(MOCK_SEARCH_RESPONSE)
-    )
-    with patch.object(
-        AzureAISearchTool, "_get_client", return_value=mock_client
-    ):
+    mock_client.search = AsyncMock(return_value=AsyncIterator(MOCK_SEARCH_RESPONSE))
+    with patch.object(AzureAISearchTool, "_get_client", return_value=mock_client):
         tool = AzureAISearchTool.load_component(hybrid_config)
 
         await tool.run_json({"query": "test query"}, CancellationToken())

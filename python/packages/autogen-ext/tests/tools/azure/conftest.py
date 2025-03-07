@@ -148,9 +148,6 @@ def mock_search_client(mock_search_response):
         return_value=len(mock_search_response)
     )
 
-    patcher = patch(
-        "azure.search.documents.aio.SearchClient",
-        return_value=mock_client
-    )
+    patcher = patch("azure.search.documents.aio.SearchClient", return_value=mock_client)
 
     return mock_client, patcher

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 try:
     from azure.core.pipeline.policies import RetryPolicy
+
     HAS_RETRY_POLICY = True
 except ImportError:
     HAS_RETRY_POLICY = False
@@ -36,10 +37,10 @@ except ImportError:
     spec_config = importlib.util.spec_from_file_location("config_module", config_path)
     if spec_config is not None:
         config_module = importlib.util.module_from_spec(spec_config)
-        loader = getattr(spec_config, 'loader', None)
+        loader = getattr(spec_config, "loader", None)
         if loader is not None:
             loader.exec_module(config_module)
-            AzureAISearchConfig = getattr(config_module, 'AzureAISearchConfig', None)
+            AzureAISearchConfig = getattr(config_module, "AzureAISearchConfig", None)
         else:
             from typing import Any as AzureAISearchConfig
     else:
@@ -47,7 +48,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound='AzureAISearchTool')
+T = TypeVar("T", bound="AzureAISearchTool")
 
 
 class SearchQuery(BaseModel):
@@ -251,9 +252,9 @@ class AzureAISearchTool(BaseTool):
                 and self.search_config.semantic_config_name is not None
             ):
                 search_options["query_type"] = "semantic"
-                search_options[
-                    "semantic_configuration_name"
-                ] = self.search_config.semantic_config_name
+                search_options["semantic_configuration_name"] = (
+                    self.search_config.semantic_config_name
+                )
 
             text_query = args.query
             if (
@@ -499,7 +500,9 @@ class CustomAzureAISearchTool(AzureAISearchTool):
         embedding_model: The name of the embedding model to use
     """
 
-    def __init__(self, openai_client: Any, embedding_model: str, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self, openai_client: Any, embedding_model: str, *args: Any, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.openai_client = openai_client
         self.embedding_model = embedding_model

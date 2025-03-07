@@ -1,9 +1,12 @@
-"""Azure tools for AutoGen.
+"""Azure AI Search tool for AutoGen."""
 
-This package provides tools for integrating with Azure services.
-"""
-
-from ._ai_search import AzureAISearchTool, SearchQuery, SearchResult
+from ._ai_search import AzureAISearchTool, CustomAzureAISearchTool, SearchQuery, SearchResult
 from ._config import AzureAISearchConfig
 
-__all__ = ["AzureAISearchTool", "AzureAISearchConfig", "SearchQuery", "SearchResult"]
+__all__ = [
+    "AzureAISearchTool",
+    "CustomAzureAISearchTool",
+    "SearchQuery",
+    "SearchResult",
+    "AzureAISearchConfig",
+]
