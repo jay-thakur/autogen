@@ -1,9 +1,6 @@
 import pandas as pd
 import pytest
 
-# Skip GraphRAG tests that require Azure dependencies
-pytest.importorskip("azure.search.documents.indexes", reason="Azure Search dependencies not installed")
-
 
 @pytest.fixture
 def community_df_fixture() -> pd.DataFrame:

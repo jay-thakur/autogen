@@ -24,7 +24,6 @@ azure = [
     "azure-ai-inference>=1.0.0b7",
     "azure-core",
     "azure-identity",
-    "azure-search-documents>=11.4.0",
 ]
 docker = ["docker~=7.0", "asyncio_atexit>=1.0.1"]
 ollama = ["ollama>=0.4.7", "tiktoken>=0.8.0"]
@@ -68,8 +67,6 @@ jupyter-executor = [
     "ipykernel>=6.29.5",
     "nbclient>=0.10.2",
 ]
-
-task-centric-memory = ["chromadb>=0.6.3"]
 
 semantic-kernel-core = [
     "semantic-kernel>=1.17.1",
@@ -145,7 +142,7 @@ dev = [
 [tool.ruff]
 extend = "../../pyproject.toml"
 include = ["src/**", "tests/*.py"]
-exclude = ["src/autogen_ext/agents/web_surfer/*.js", "src/autogen_ext/runtimes/grpc/protos", "tests/protos", "README.md"]
+exclude = ["src/autogen_ext/agents/web_surfer/*.js", "src/autogen_ext/runtimes/grpc/protos", "tests/protos"]
 
 [tool.pyright]
 extends = "../../pyproject.toml"
