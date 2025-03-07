@@ -7,15 +7,15 @@ For more information about Azure AI Search, see:
 https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
 """
 
-from typing import Any, Dict, List, Optional, Type, TypeVar, Union, cast
 import logging
 import time
+from typing import Any, Dict, List, Optional, Type, TypeVar, Union, cast
 
-from azure.core.credentials import AzureKeyCredential, TokenCredential
-from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
-from azure.search.documents.aio import SearchClient
 from autogen_core import CancellationToken, ComponentModel
 from autogen_core.tools import BaseTool
+from azure.core.credentials import AzureKeyCredential, TokenCredential
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+from azure.search.documents.aio import SearchClient
 from pydantic import BaseModel, Field
 
 try:
@@ -24,12 +24,34 @@ try:
     HAS_RETRY_POLICY = True
 except ImportError:
     HAS_RETRY_POLICY = False
+
+
+# Define a fallback config class for type checking purposes
+class _FallbackAzureAISearchConfig:
+    def __init__(self, **kwargs: Any):
+        self.name = kwargs.get("name", "")
+        self.description = kwargs.get("description", "")
+        self.endpoint = kwargs.get("endpoint", "")
+        self.index_name = kwargs.get("index_name", "")
+        self.credential = kwargs.get("credential", None)
+        self.api_version = kwargs.get("api_version", "")
+        self.semantic_config_name = kwargs.get("semantic_config_name", None)
+        self.query_type = kwargs.get("query_type", "simple")
+        self.search_fields = kwargs.get("search_fields", None)
+        self.select_fields = kwargs.get("select_fields", None)
+        self.vector_fields = kwargs.get("vector_fields", None)
+        self.top = kwargs.get("top", None)
+        self.retry_enabled = kwargs.get("retry_enabled", False)
+        self.retry_mode = kwargs.get("retry_mode", "fixed")
+        self.retry_max_attempts = kwargs.get("retry_max_attempts", 3)
+
+
 try:
     from ._config import AzureAISearchConfig
 except ImportError:
+    import importlib.util
     import os
     import sys
-    import importlib.util
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(current_dir, "_config.py")
@@ -40,11 +62,16 @@ except ImportError:
         loader = getattr(spec_config, "loader", None)
         if loader is not None:
             loader.exec_module(config_module)
-            AzureAISearchConfig = getattr(config_module, "AzureAISearchConfig", None)
+            # Type cast the config to help mypy
+            config_class = getattr(config_module, "AzureAISearchConfig", None)
+            if config_class is not None:
+                AzureAISearchConfig = cast("Type[Any]", config_class)
+            else:
+                AzureAISearchConfig = _FallbackAzureAISearchConfig
         else:
-            from typing import Any as AzureAISearchConfig
+            AzureAISearchConfig = _FallbackAzureAISearchConfig
     else:
-        from typing import Any as AzureAISearchConfig
+        AzureAISearchConfig = _FallbackAzureAISearchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +89,9 @@ class SearchQuery(BaseModel):
     """
 
     query: str = Field(description="Search query text")
-    vector: Optional[List[float]] = Field(
-        default=None, description="Optional vector for vector/hybrid search"
-    )
-    filter: Optional[str] = Field(
-        default=None, description="Optional filter expression"
-    )
-    top: Optional[int] = Field(
-        default=None, description="Optional number of results to return"
-    )
+    vector: Optional[List[float]] = Field(default=None, description="Optional vector for vector/hybrid search")
+    filter: Optional[str] = Field(default=None, description="Optional filter expression")
+    top: Optional[int] = Field(default=None, description="Optional number of results to return")
 
 
 class SearchResult(BaseModel):
@@ -84,9 +105,7 @@ class SearchResult(BaseModel):
 
     score: float = Field(description="The search score")
     content: Dict[str, Any] = Field(description="The document content")
-    metadata: Dict[str, Any] = Field(
-        description="Additional metadata about the document"
-    )
+    metadata: Dict[str, Any] = Field(description="Additional metadata about the document")
 
 
 class AzureAISearchTool(BaseTool):
@@ -184,27 +203,27 @@ class AzureAISearchTool(BaseTool):
     def _get_client(self) -> SearchClient:
         """Lazy initialization of the search client."""
         if self._client is None:
-            client_args = {
+            client_args: Dict[str, Any] = {
                 "endpoint": self._endpoint,
                 "index_name": self._index_name,
                 "credential": self._credential,
                 "api_version": self._api_version,
             }
 
-            if HAS_RETRY_POLICY and self.search_config.retry_enabled:
+            if HAS_RETRY_POLICY and getattr(self.search_config, "retry_enabled", False):
+                # Create retry policy if supported
                 retry_policy = RetryPolicy(
-                    retry_mode=self.search_config.retry_mode,
-                    retry_total=self.search_config.retry_max_attempts,
+                    retry_mode=getattr(self.search_config, "retry_mode", "fixed"),
+                    retry_total=getattr(self.search_config, "retry_max_attempts", 3),
                 )
                 client_args["retry_policy"] = retry_policy
 
-            self._client = SearchClient(**client_args)
+            # Create the search client with proper typing
+            self._client = cast(SearchClient, SearchClient(**client_args))
 
-        return self._client
+        return cast(SearchClient, self._client)
 
-    async def run(
-        self, args: SearchQuery, cancellation_token: CancellationToken
-    ) -> List[SearchResult]:
+    async def run(self, args: SearchQuery, cancellation_token: CancellationToken) -> List[SearchResult]:
         """Run the search query.
 
         Args:
@@ -247,23 +266,15 @@ class AzureAISearchTool(BaseTool):
             elif self.search_config.top is not None:
                 search_options["top"] = self.search_config.top
 
-            if (
-                self.search_config.query_type == "semantic"
-                and self.search_config.semantic_config_name is not None
-            ):
+            if self.search_config.query_type == "semantic" and self.search_config.semantic_config_name is not None:
                 search_options["query_type"] = "semantic"
-                search_options["semantic_configuration_name"] = (
-                    self.search_config.semantic_config_name
-                )
+                search_options["semantic_configuration_name"] = self.search_config.semantic_config_name
 
             text_query = args.query
             if (
                 self.search_config.query_type == "vector"
                 or args.vector
-                or (
-                    self.search_config.vector_fields
-                    and len(self.search_config.vector_fields) > 0
-                )
+                or (self.search_config.vector_fields and len(self.search_config.vector_fields) > 0)
             ):
                 vector = args.vector if args.vector else self._get_embedding(args.query)
 
@@ -316,62 +327,48 @@ class AzureAISearchTool(BaseTool):
             return results
 
         except Exception as e:
-            if isinstance(e, ResourceNotFoundError) or "ResourceNotFoundError" in str(
-                type(e)
-            ):
+            if isinstance(e, ResourceNotFoundError) or "ResourceNotFoundError" in str(type(e)):
                 error_msg = str(e)
-                if (
-                    "test-index" in error_msg
-                    or self.search_config.index_name in error_msg
-                ):
+                if "test-index" in error_msg or self.search_config.index_name in error_msg:
                     raise Exception(
                         f"Index '{self.search_config.index_name}' not found - Please verify the index name is correct and exists in your Azure AI Search service"
-                    )
+                    ) from e
                 elif "cognitive-services" in error_msg.lower():
                     raise Exception(
                         f"Azure AI Search service not found - Please verify your endpoint URL is correct: {e}"
-                    )
+                    ) from e
                 else:
-                    raise Exception(f"Azure AI Search resource not found: {e}")
+                    raise Exception(f"Azure AI Search resource not found: {e}") from e
 
-            elif isinstance(e, HttpResponseError) or "HttpResponseError" in str(
-                type(e)
-            ):
+            elif isinstance(e, HttpResponseError) or "HttpResponseError" in str(type(e)):
                 error_msg = str(e)
-                if (
-                    "invalid_api_key" in error_msg.lower()
-                    or "unauthorized" in error_msg.lower()
-                ):
+                if "invalid_api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
                     raise Exception(
-                        f"Authentication failed: Invalid API key or credentials - Please verify your credentials are correct"
-                    )
+                        "Authentication failed: Invalid API key or credentials - Please verify your credentials are correct"
+                    ) from e
                 elif "syntax_error" in error_msg.lower():
                     raise Exception(
                         f"Invalid query syntax - Please check your search query format: {args.query}"
-                    )
+                    ) from e
                 elif "bad request" in error_msg.lower():
-                    raise Exception(
-                        f"Bad request - The search request contains invalid parameters: {e}"
-                    )
+                    raise Exception(f"Bad request - The search request contains invalid parameters: {e}") from e
                 elif "timeout" in error_msg.lower():
                     raise Exception(
-                        f"Azure AI Search operation timed out - Consider simplifying your query or checking service health"
-                    )
+                        "Azure AI Search operation timed out - Consider simplifying your query or checking service health"
+                    ) from e
                 elif "service unavailable" in error_msg.lower():
-                    raise Exception(
-                        f"Azure AI Search service is currently unavailable - Please try again later"
-                    )
+                    raise Exception("Azure AI Search service is currently unavailable - Please try again later") from e
                 else:
-                    raise Exception(f"Azure AI Search HTTP error: {e}")
+                    raise Exception(f"Azure AI Search HTTP error: {e}") from e
 
             elif cancellation_token.is_cancelled():
-                raise Exception("Operation cancelled")
+                raise Exception("Operation cancelled") from None
 
             else:
                 logger.error(f"Unexpected error during search operation: {e}")
                 raise Exception(
                     f"Error during search operation: {e} - Please check your search configuration and Azure AI Search service status"
-                )
+                ) from e
 
     def _get_embedding(self, query: str) -> List[float]:
         """Generate embedding vector for the query text.
@@ -387,13 +384,10 @@ class AzureAISearchTool(BaseTool):
         client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version="2023-05-15",
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         )
 
-        response = client.embeddings.create(
-            input=query,
-            model="text-embedding-ada-002"
-        )
+        response = client.embeddings.create(input=query, model="text-embedding-ada-002")
 
         return response.data[0].embedding
         ```
@@ -460,9 +454,7 @@ class AzureAISearchTool(BaseTool):
         """
         target_class = component_class if component_class is not None else cls
 
-        if hasattr(component_config, "config") and isinstance(
-            component_config.config, dict
-        ):
+        if hasattr(component_config, "config") and isinstance(component_config.config, dict):
             config_dict = component_config.config
         elif isinstance(component_config, dict):
             config_dict = component_config
@@ -474,7 +466,7 @@ class AzureAISearchTool(BaseTool):
         return cast(T, target_class._from_config(config))
 
     async def run_json(
-        self, args: Dict[str, Any], cancellation_token: CancellationToken
+        self, args: Union[Dict[str, Any], Any], cancellation_token: CancellationToken
     ) -> List[Dict[str, Any]]:
         """Run the tool with JSON arguments and return JSON-serializable results.
 
@@ -500,9 +492,7 @@ class CustomAzureAISearchTool(AzureAISearchTool):
         embedding_model: The name of the embedding model to use
     """
 
-    def __init__(
-        self, openai_client: Any, embedding_model: str, *args: Any, **kwargs: Any
-    ) -> None:
+    def __init__(self, openai_client: Any, embedding_model: str, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.openai_client = openai_client
         self.embedding_model = embedding_model
@@ -519,7 +509,5 @@ class CustomAzureAISearchTool(AzureAISearchTool):
         Returns:
             The embedding vector as a list of floats
         """
-        response = self.openai_client.embeddings.create(
-            input=query, model=self.embedding_model
-        )
+        response = self.openai_client.embeddings.create(input=query, model=self.embedding_model)
         return cast(List[float], response.data[0].embedding)
