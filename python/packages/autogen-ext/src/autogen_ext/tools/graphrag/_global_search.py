@@ -5,17 +5,23 @@ import pandas as pd
 import tiktoken
 from autogen_core import CancellationToken
 from autogen_core.tools import BaseTool
-from graphrag.config.config_file_loader import load_config_from_file
-from graphrag.query.indexer_adapters import (
-    read_indexer_communities,
-    read_indexer_entities,
-    read_indexer_reports,
-)
-from graphrag.query.llm.base import BaseLLM
-from graphrag.query.llm.get_client import get_llm
-from graphrag.query.structured_search.global_search.community_context import GlobalCommunityContext
-from graphrag.query.structured_search.global_search.search import GlobalSearch
 from pydantic import BaseModel, Field
+
+# Try importing GraphRAG dependencies, which might fail due to missing azure.search.documents.indexes
+try:
+    from graphrag.config.config_file_loader import load_config_from_file
+    from graphrag.query.indexer_adapters import (
+        read_indexer_communities,
+        read_indexer_entities,
+        read_indexer_reports,
+    )
+    from graphrag.query.llm.base import BaseLLM
+    from graphrag.query.llm.get_client import get_llm
+    from graphrag.query.structured_search.global_search.community_context import GlobalCommunityContext
+    from graphrag.query.structured_search.global_search.search import GlobalSearch
+    _HAS_GRAPHRAG_DEPS = True
+except ImportError:
+    _HAS_GRAPHRAG_DEPS = False
 
 from ._config import GlobalContextConfig as ContextConfig
 from ._config import GlobalDataConfig as DataConfig
