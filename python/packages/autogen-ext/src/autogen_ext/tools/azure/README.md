@@ -60,6 +60,8 @@ search_tool = CustomSearchTool(
 You can apply filters to narrow down search results:
 
 ```python
+from autogen_core import CancellationToken
+
 results = await search_tool.run_json(
     {
         "query": "financial reports",
