@@ -4,11 +4,13 @@ This module provides configuration classes for the Azure AI Search tool, includi
 settings for authentication, search behavior, retry policies, and caching.
 """
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, Union, cast
 import logging
 
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from pydantic import BaseModel, Field, model_validator
+
+T = TypeVar('T', bound='AzureAISearchConfig')
 
 logger = logging.getLogger(__name__)
 
@@ -78,101 +80,92 @@ class AzureAISearchConfig(BaseModel):
     """
 
     name: str = Field(description="The name of the tool")
-    description: Optional[str] = Field(default=None, description="A description of the tool")
-    endpoint: str = Field(description="The endpoint URL for your Azure AI Search service")
-    index_name: str = Field(description="The name of the search index to query")
-    api_version: str = Field(
-        default="2023-11-01",
-        description="API version to use"
+    description: Optional[str] = Field(
+        default=None, description="A description of the tool"
     )
+    endpoint: str = Field(
+        description="The endpoint URL for your Azure AI Search service"
+    )
+    index_name: str = Field(description="The name of the search index to query")
+    api_version: str = Field(default="2023-11-01", description="API version to use")
     credential: Union[AzureKeyCredential, TokenCredential] = Field(
         description="The credential to use for authentication"
     )
     semantic_config_name: Optional[str] = Field(
-        default=None,
-        description="Optional name of semantic configuration to use"
+        default=None, description="Optional name of semantic configuration to use"
     )
     query_type: Literal["simple", "full", "semantic", "vector"] = Field(
-        default="simple",
-        description="Type of query to perform"
+        default="simple", description="Type of query to perform"
     )
-    search_fields: Optional[list[str]] = Field(
-        default=None,
-        description="Optional list of fields to search in"
+    search_fields: Optional[List[str]] = Field(
+        default=None, description="Optional list of fields to search in"
     )
-    select_fields: Optional[list[str]] = Field(
-        default=None,
-        description="Optional list of fields to return in results"
+    select_fields: Optional[List[str]] = Field(
+        default=None, description="Optional list of fields to return in results"
     )
-    vector_fields: Optional[list[str]] = Field(
-        default=None,
-        description="Optional list of vector fields for vector search"
+    vector_fields: Optional[List[str]] = Field(
+        default=None, description="Optional list of vector fields for vector search"
     )
     top: Optional[int] = Field(
-        default=None,
-        description="Optional number of results to return"
+        default=None, description="Optional number of results to return"
     )
-    # Retry policy settings
+
     retry_enabled: bool = Field(
-        default=True,
-        description="Whether to enable retry policy for transient errors"
+        default=True, description="Whether to enable retry policy for transient errors"
     )
     retry_max_attempts: Optional[int] = Field(
-        default=3,
-        description="Maximum number of retry attempts for failed requests"
+        default=3, description="Maximum number of retry attempts for failed requests"
     )
     retry_mode: Literal["fixed", "exponential"] = Field(
         default="exponential",
-        description="Retry backoff strategy: fixed or exponential"
+        description="Retry backoff strategy: fixed or exponential",
     )
-    # Caching settings
+
     enable_caching: bool = Field(
         default=False,
-        description="Whether to enable client-side caching of search results"
+        description="Whether to enable client-side caching of search results",
     )
     cache_ttl_seconds: int = Field(
         default=300,  # 5 minutes
-        description="Time-to-live for cached search results in seconds"
+        description="Time-to-live for cached search results in seconds",
     )
-    # Embedding settings
+
     embedding_provider: Optional[str] = Field(
         default=None,
-        description="Name of embedding provider to use (e.g., 'azure_openai', 'openai')"
+        description="Name of embedding provider to use (e.g., 'azure_openai', 'openai')",
     )
     embedding_model: Optional[str] = Field(
-        default=None,
-        description="Model name to use for generating embeddings"
+        default=None, description="Model name to use for generating embeddings"
     )
     embedding_dimension: Optional[int] = Field(
-        default=None,
-        description="Dimension of embedding vectors produced by the model"  
+        default=None, description="Dimension of embedding vectors produced by the model"
     )
-    
+
     model_config = {"arbitrary_types_allowed": True}
-    
-    @model_validator(mode='before')
+
     @classmethod
-    def validate_credentials(cls, data: Any) -> Any:
+    @model_validator(mode="before")
+    def validate_credentials(cls: Type[T], data: Any) -> Any:
         """Validate and convert credential data.
-        
+
         This validator converts a dictionary with an 'api_key' into an AzureKeyCredential.
         It also supports passing in an existing AzureKeyCredential or TokenCredential directly.
         """
-        if isinstance(data, dict) and 'credential' in data:
-            credential = data['credential']
-            
-            if isinstance(credential, dict) and 'api_key' in credential:
-                data['credential'] = AzureKeyCredential(credential['api_key'])
-                
+        if isinstance(data, dict) and "credential" in data:
+            credential = data["credential"]
+
+            if isinstance(credential, dict) and "api_key" in credential:
+                data["credential"] = AzureKeyCredential(credential["api_key"])
+
         return data
-    
-    def model_dump(self, **kwargs):
+
+    def model_dump(self, **kwargs: Any) -> Dict[str, Any]:
         """Custom model_dump to handle credentials."""
         data = super().model_dump(**kwargs)
-        
+
         if isinstance(self.credential, AzureKeyCredential):
-            data['credential'] = {"type": "AzureKeyCredential"}
+            data["credential"] = {"type": "AzureKeyCredential"}
         elif isinstance(self.credential, TokenCredential):
-            data['credential'] = {"type": "TokenCredential"}
-            
-        return data
+            data["credential"] = {"type": "TokenCredential"}
+
+        return cast(Dict[str, Any], data)
