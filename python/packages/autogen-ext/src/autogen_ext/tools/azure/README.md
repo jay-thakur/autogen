@@ -26,26 +26,15 @@ pip install "autogen-ext[azure]"
 You can customize the embedding generation by extending the base class:
 
 ```python
-from autogen_ext.tools.azure import AzureAISearchTool
+from autogen_ext.tools.azure import OpenAIAzureAISearchTool
 from azure.core.credentials import AzureKeyCredential
 import openai
 
-class CustomSearchTool(AzureAISearchTool):
-    def __init__(self, openai_client, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.openai_client = openai_client
-        
-    def _get_embedding(self, query):
-        response = self.openai_client.embeddings.create(
-            input=query,
-            model="text-embedding-ada-002"
-        )
-        return response.data[0].embedding
-
 # Usage
 openai_client = openai.OpenAI(api_key="your-openai-key")
-search_tool = CustomSearchTool(
+search_tool = OpenAIAzureAISearchTool(
     openai_client=openai_client,
+    embedding_model="text-embedding-ada-002",
     name="document_search",
     endpoint="https://your-search-service.search.windows.net",
     index_name="your-index",

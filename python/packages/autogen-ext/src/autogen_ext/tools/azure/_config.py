@@ -4,6 +4,7 @@ This module provides configuration classes for the Azure AI Search tool, includi
 settings for authentication, search behavior, retry policies, and caching.
 """
 
+import logging
 from typing import (
     Any,
     Callable,
@@ -16,7 +17,6 @@ from typing import (
     Union,
     cast,
 )
-import logging
 
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from pydantic import BaseModel, Field, model_validator
@@ -53,7 +53,7 @@ class AzureAISearchConfig(BaseModel):
                 index_name="my-index",
                 credential=AzureKeyCredential("<your-key>"),
                 query_type="semantic",
-                semantic_config_name="default"
+                semantic_config_name="default",
             )
 
     For more details, see:
@@ -91,12 +91,8 @@ class AzureAISearchConfig(BaseModel):
     """
 
     name: str = Field(description="The name of the tool")
-    description: Optional[str] = Field(
-        default=None, description="A description of the tool"
-    )
-    endpoint: str = Field(
-        description="The endpoint URL for your Azure AI Search service"
-    )
+    description: Optional[str] = Field(default=None, description="A description of the tool")
+    endpoint: str = Field(description="The endpoint URL for your Azure AI Search service")
     index_name: str = Field(description="The name of the search index to query")
     api_version: str = Field(default="2023-11-01", description="API version to use")
     credential: Union[AzureKeyCredential, TokenCredential] = Field(
@@ -108,22 +104,14 @@ class AzureAISearchConfig(BaseModel):
     query_type: Literal["simple", "full", "semantic", "vector"] = Field(
         default="simple", description="Type of query to perform"
     )
-    search_fields: Optional[List[str]] = Field(
-        default=None, description="Optional list of fields to search in"
-    )
-    select_fields: Optional[List[str]] = Field(
-        default=None, description="Optional list of fields to return in results"
-    )
+    search_fields: Optional[List[str]] = Field(default=None, description="Optional list of fields to search in")
+    select_fields: Optional[List[str]] = Field(default=None, description="Optional list of fields to return in results")
     vector_fields: Optional[List[str]] = Field(
         default=None, description="Optional list of vector fields for vector search"
     )
-    top: Optional[int] = Field(
-        default=None, description="Optional number of results to return"
-    )
+    top: Optional[int] = Field(default=None, description="Optional number of results to return")
 
-    retry_enabled: bool = Field(
-        default=True, description="Whether to enable retry policy for transient errors"
-    )
+    retry_enabled: bool = Field(default=True, description="Whether to enable retry policy for transient errors")
     retry_max_attempts: Optional[int] = Field(
         default=3, description="Maximum number of retry attempts for failed requests"
     )
@@ -145,9 +133,7 @@ class AzureAISearchConfig(BaseModel):
         default=None,
         description="Name of embedding provider to use (e.g., 'azure_openai', 'openai')",
     )
-    embedding_model: Optional[str] = Field(
-        default=None, description="Model name to use for generating embeddings"
-    )
+    embedding_model: Optional[str] = Field(default=None, description="Model name to use for generating embeddings")
     embedding_dimension: Optional[int] = Field(
         default=None, description="Dimension of embedding vectors produced by the model"
     )

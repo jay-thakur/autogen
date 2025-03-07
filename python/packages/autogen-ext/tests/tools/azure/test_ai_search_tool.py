@@ -24,9 +24,7 @@ if not os.path.exists(init_file):
         pass
 
 # Import modules dynamically
-spec_ai_search = importlib.util.spec_from_file_location(
-    "ai_search_module", ai_search_path
-)
+spec_ai_search = importlib.util.spec_from_file_location("ai_search_module", ai_search_path)
 ai_search_module = importlib.util.module_from_spec(spec_ai_search)
 spec_ai_search.loader.exec_module(ai_search_module)
 
@@ -104,10 +102,7 @@ def test_tool_schema_generation(test_config: ComponentModel) -> None:
     assert "parameters" in schema
     assert schema["parameters"]["type"] == "object"
     assert "properties" in schema["parameters"]
-    assert (
-        schema["parameters"]["properties"]["query"]["description"]
-        == "Search query text"
-    )
+    assert schema["parameters"]["properties"]["query"]["description"] == "Search query text"
     assert schema["parameters"]["properties"]["query"]["type"] == "string"
     assert "filter" in schema["parameters"]["properties"]
     assert "top" in schema["parameters"]["properties"]
@@ -123,10 +118,7 @@ def test_tool_properties(test_config: ComponentModel) -> None:
 
         assert tool.name == "TestAzureSearch"
         assert tool.description == "Test Azure AI Search Tool"
-        assert (
-            tool.search_config.endpoint
-            == "https://test-search-service.search.windows.net"
-        )
+        assert tool.search_config.endpoint == "https://test-search-service.search.windows.net"
         assert tool.search_config.index_name == "test-index"
         assert tool.search_config.api_version == "2023-10-01-Preview"
         assert tool.search_config.query_type == "simple"
@@ -140,10 +132,7 @@ def test_component_base_class(test_config: ComponentModel) -> None:
     with patch("azure.search.documents.aio.SearchClient"):
         tool = AzureAISearchTool.load_component(test_config)
         assert tool.dump_component() is not None
-        assert (
-            AzureAISearchTool.load_component(tool.dump_component(), AzureAISearchTool)
-            is not None
-        )
+        assert AzureAISearchTool.load_component(tool.dump_component(), AzureAISearchTool) is not None
 
 
 @pytest.mark.asyncio
@@ -231,9 +220,7 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
 
         mock_client = MagicMock(return_value=mock_client_instance)
 
-        with patch.object(
-            tool, "_get_embedding", return_value=[0.1, 0.2, 0.3, 0.4, 0.5]
-        ):
+        with patch.object(tool, "_get_embedding", return_value=[0.1, 0.2, 0.3, 0.4, 0.5]):
             mock_results = [
                 {
                     "@search.score": 0.95,
@@ -255,9 +242,7 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
             mock_client_instance.search.return_value = AsyncIterator(mock_results)
 
             mock_client.return_value = mock_client_instance
-            with patch.object(
-                tool, "_get_client", return_value=mock_client.return_value
-            ):
+            with patch.object(tool, "_get_client", return_value=mock_client.return_value):
                 await tool.run_json({"query": "test query"}, CancellationToken())
                 mock_client_instance.search.assert_called_once()
                 args, kwargs = mock_client_instance.search.call_args
