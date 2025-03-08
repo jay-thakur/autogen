@@ -18,20 +18,22 @@ pip install "autogen-ext[azure]"
 - **Semantic Search**: AI-powered search with semantic ranking
 - **Vector Search**: Similarity search using embeddings
 - **Hybrid Search**: Combines text and vector search for optimal results
+- **Resilient Operation**: Built-in retry logic and error handling
+- **Environment Variable Support**: Secure credential management
 
-### Advanced Usage
+### Usage Examples
 
-#### Custom Embedding Provider
-
-You can customize the embedding generation by extending the base class:
+#### Basic Setup
 
 ```python
 from autogen_ext.tools.azure import OpenAIAzureAISearchTool
 from azure.core.credentials import AzureKeyCredential
 import openai
 
-# Usage
-openai_client = openai.OpenAI(api_key="your-openai-key")
+# Initialize the async OpenAI client
+openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+
+# Create the search tool
 search_tool = OpenAIAzureAISearchTool(
     openai_client=openai_client,
     embedding_model="text-embedding-ada-002",
@@ -42,46 +44,121 @@ search_tool = OpenAIAzureAISearchTool(
     query_type="vector",
     vector_fields=["embedding"]
 )
+
+# Use in an async function
+async def search_documents():
+    from autogen_core import CancellationToken
+    
+    results = await search_tool.run_json(
+        {
+            "query": "financial reports",
+            "filter": "year eq 2023 and department eq 'Finance'"
+        },
+        CancellationToken()
+    )
+    return results
 ```
 
-#### Filtering Results
-
-You can apply filters to narrow down search results:
+#### Using Factory Methods
 
 ```python
-from autogen_core import CancellationToken
+# Create a semantic search tool
+semantic_search = OpenAIAzureAISearchTool.create_semantic_search(
+    openai_client=openai_client,
+    embedding_model="text-embedding-ada-002",
+    name="semantic_search",
+    endpoint="https://your-search-service.search.windows.net",
+    index_name="your-index",
+    credential=AzureKeyCredential("your-api-key"),
+    semantic_config_name="default"
+)
 
-results = await search_tool.run_json(
-    {
-        "query": "financial reports",
-        "filter": "year eq 2023 and department eq 'Finance'"
-    }, 
-    CancellationToken()
+# Create a vector search tool
+vector_search = OpenAIAzureAISearchTool.create_vector_search(
+    openai_client=openai_client,
+    embedding_model="text-embedding-ada-002",
+    name="vector_search",
+    endpoint="https://your-search-service.search.windows.net",
+    index_name="your-index",
+    credential=AzureKeyCredential("your-api-key"),
+    vector_fields=["embedding"]
+)
+
+# Create a hybrid search tool
+hybrid_search = OpenAIAzureAISearchTool.create_hybrid_search(
+    openai_client=openai_client,
+    embedding_model="text-embedding-ada-002",
+    name="hybrid_search",
+    endpoint="https://your-search-service.search.windows.net",
+    index_name="your-index",
+    credential=AzureKeyCredential("your-api-key"),
+    vector_fields=["embedding"],
+    semantic_config_name="default"
 )
 ```
 
-### Configuration Options
+#### Using Environment Variables
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `endpoint` | Azure AI Search service URL | Required |
-| `index_name` | Name of the search index | Required |
-| `credential` | Azure credential for authentication | Required |
-| `query_type` | Type of search: "simple", "full", "semantic", "vector" | "simple" |
-| `semantic_config_name` | Name of semantic configuration | None |
-| `vector_fields` | Fields to use for vector search | None |
-| `search_fields` | Fields to search within | All searchable fields |
-| `select_fields` | Fields to return in results | All fields |
-| `top` | Maximum number of results to return | 50 |
+Set up your environment variables:
+
+```bash
+export AZURE_SEARCH_ENDPOINT="https://your-search-service.search.windows.net"
+export AZURE_SEARCH_INDEX_NAME="your-index"
+export AZURE_SEARCH_API_KEY="your-api-key"
+export AZURE_SEARCH_QUERY_TYPE="semantic"
+export AZURE_SEARCH_SEMANTIC_CONFIG="default"
+export AZURE_SEARCH_VECTOR_FIELDS="embedding"
+```
+
+Then create the search tool:
+
+```python
+# Load configuration from environment variables
+search_tool = OpenAIAzureAISearchTool.from_env(
+    openai_client=openai_client,
+    embedding_model="text-embedding-ada-002",
+    name="env_search"
+)
+```
 
 ### Error Handling
 
-The tool provides detailed error messages for common issues:
+The tool includes built-in retry logic for common transient errors:
 
-- Index not found
-- Authentication failures
-- Invalid query syntax
-- Service unavailability
+- Rate limiting
+- Network connectivity issues
+- Server errors
+
+It uses exponential backoff with jitter to efficiently recover from transient failures.
+
+### Security Best Practices
+
+1. **Use environment variables** instead of hardcoding credentials
+2. **Use Azure Key Vault** for storing sensitive credentials
+3. **Use managed identities** when running in Azure
+4. **Apply least privilege** to your search service API keys
+5. **Regularly rotate** your API keys
+
+### Performance Optimization
+
+For bulk operations, use the batched embedding functionality:
+
+```python
+async def process_multiple_queries(queries):
+    # Process multiple queries in batch for efficiency
+    embeddings = await search_tool._get_embeddings_batch(queries)
+    # Use embeddings for search or other operations
+```
+
+### Debugging
+
+Enable more verbose logging:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("autogen_ext.tools.azure").setLevel(logging.DEBUG)
+```
 
 ### Troubleshooting
 

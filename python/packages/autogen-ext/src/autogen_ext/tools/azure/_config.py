@@ -62,32 +62,37 @@ class AzureAISearchConfig(BaseModel):
         * `Semantic Search <https://learn.microsoft.com/azure/search/semantic-search-overview>`_
 
     Args:
-        name: Name for the tool instance, used to identify it in the agent's toolkit.
-        description: Human-readable description of what this tool does and how to use it.
-        endpoint: The full URL of your Azure AI Search service, in the format
+        name (str): Name for the tool instance, used to identify it in the agent's toolkit.
+        description (Optional[str]): Human-readable description of what this tool does and how to use it.
+        endpoint (str): The full URL of your Azure AI Search service, in the format
             'https://<service-name>.search.windows.net'.
-        index_name: Name of the target search index in your Azure AI Search service.
+        index_name (str): Name of the target search index in your Azure AI Search service.
             The index must be pre-created and properly configured.
-        api_version: Azure AI Search REST API version to use. Defaults to '2023-11-01'.
+        api_version (str): Azure AI Search REST API version to use. Defaults to '2023-11-01'.
             Only change if you need specific features from a different API version.
-        credential: Azure authentication credential:
+        credential (Union[AzureKeyCredential, TokenCredential]): Azure authentication credential:
             - AzureKeyCredential: For API key authentication (admin/query key)
             - TokenCredential: For Azure AD authentication (e.g., DefaultAzureCredential)
-        semantic_config_name: Name of a semantic configuration defined in your search service.
+        semantic_config_name (Optional[str]): Name of a semantic configuration defined in your search service.
             Required only when using semantic/hybrid search capabilities.
-        query_type: The search query mode to use:
+        query_type (Literal["simple", "full", "semantic", "vector"]): The search query mode to use:
             - 'simple': Basic keyword search (default)
             - 'full': Full Lucene query syntax
             - 'semantic': Semantic ranking with ML models
             - 'vector': Vector similarity search
-        search_fields: List of index fields to search within. If not specified,
+        search_fields (Optional[List[str]]): List of index fields to search within. If not specified,
             searches all searchable fields. Example: ['title', 'content'].
-        select_fields: Fields to return in search results. If not specified,
+        select_fields (Optional[List[str]]): Fields to return in search results. If not specified,
             returns all fields. Use to optimize response size.
-        vector_fields: Vector field names for vector search. Must be configured
+        vector_fields (Optional[List[str]]): Vector field names for vector search. Must be configured
             in your search index as vector fields. Required for vector search.
-        top: Maximum number of documents to return in search results.
+        top (Optional[int]): Maximum number of documents to return in search results.
             Helps control response size and processing time.
+        retry_enabled (bool): Whether to enable retry policy for transient errors. Defaults to True.
+        retry_max_attempts (Optional[int]): Maximum number of retry attempts for failed requests. Defaults to 3.
+        retry_mode (Literal["fixed", "exponential"]): Retry backoff strategy: fixed or exponential. Defaults to "exponential".
+        enable_caching (bool): Whether to enable client-side caching of search results. Defaults to False.
+        cache_ttl_seconds (int): Time-to-live for cached search results in seconds. Defaults to 300 (5 minutes).
     """
 
     name: str = Field(description="The name of the tool")
@@ -165,4 +170,4 @@ class AzureAISearchConfig(BaseModel):
         elif isinstance(self.credential, TokenCredential):
             data["credential"] = {"type": "TokenCredential"}
 
-        return cast(Dict[str, Any], data)
+        return data
