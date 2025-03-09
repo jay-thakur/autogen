@@ -40,17 +40,17 @@ if spec_config.loader is None:
     raise ImportError(f"No loader found for {config_path}")
 spec_config.loader.exec_module(config_module)
 
-AzureAISearchTool = ai_search_module.AzureAISearchTool
+BaseAzureAISearchTool = ai_search_module.BaseAzureAISearchTool
 SearchQuery = ai_search_module.SearchQuery
 SearchResult = ai_search_module.SearchResult
 AzureAISearchConfig = config_module.AzureAISearchConfig
 
 
-original_abstractmethods: frozenset[str] = getattr(AzureAISearchTool, "__abstractmethods__", frozenset())
-AzureAISearchTool.__abstractmethods__ = frozenset()
+original_abstractmethods: frozenset[str] = getattr(BaseAzureAISearchTool, "__abstractmethods__", frozenset())
+BaseAzureAISearchTool.__abstractmethods__ = frozenset()
 
 
-class MockAzureAISearchTool(AzureAISearchTool):  # type: ignore
+class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
     """Mock implementation for testing purposes."""
 
     def __init__(self, **kwargs: Any) -> None:

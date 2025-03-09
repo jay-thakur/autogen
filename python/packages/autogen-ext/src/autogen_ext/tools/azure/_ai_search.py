@@ -92,7 +92,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T", bound="AzureAISearchTool")
+T = TypeVar("T", bound="BaseAzureAISearchTool")
 
 
 class SearchQuery(BaseModel):
@@ -135,7 +135,7 @@ class SearchResults(BaseModel):
     results: List[SearchResult] = Field(description="List of search results")
 
 
-class AzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
+class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
     """Tool for performing intelligent search operations using Azure AI Search.
 
     This is an abstract base class that requires subclasses to implement the _get_embedding method
@@ -440,19 +440,19 @@ class AzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         """
         config = self._to_config()
         return ComponentModel(
-            provider="autogen_ext.tools.azure.AzureAISearchTool",
+            provider="autogen_ext.tools.azure.BaseAzureAISearchTool",
             config=config.model_dump(exclude_none=True),
         )
 
     @classmethod
-    def _from_config(cls, config: Any) -> "AzureAISearchTool":
+    def _from_config(cls, config: Any) -> "BaseAzureAISearchTool":
         """Create a tool instance from configuration.
 
         Args:
             config (Any): The configuration object containing tool settings
 
         Returns:
-            AzureAISearchTool: An initialized instance of the search tool
+            BaseAzureAISearchTool: An initialized instance of the search tool
         """
         return cls(
             name=config.name,
@@ -538,7 +538,7 @@ class AzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         return "\n".join(result_strings)
 
 
-class OpenAIAzureAISearchTool(AzureAISearchTool):
+class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     """Azure AI Search tool with OpenAI embeddings.
 
     This implementation uses OpenAI's embedding models to generate vectors for search queries.
