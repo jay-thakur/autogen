@@ -4,12 +4,13 @@ import importlib.util
 import os
 import sys
 import types
-from typing import Any, Dict, List, Optional, Type, Union, cast
+from typing import Any, Dict, List, Optional, Type, TypeAlias, Union, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from autogen_core import CancellationToken, ComponentModel
 from autogen_core.tools import BaseTool
+from pydantic import BaseModel
 
 src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 sys.path.insert(0, src_dir)
@@ -41,9 +42,16 @@ if spec_config.loader is None:
 spec_config.loader.exec_module(config_module)
 
 BaseAzureAISearchTool = ai_search_module.BaseAzureAISearchTool
+# Type aliases for mypy
 SearchQuery = ai_search_module.SearchQuery
 SearchResult = ai_search_module.SearchResult
+SearchResults = ai_search_module.SearchResults
 AzureAISearchConfig = config_module.AzureAISearchConfig
+
+# Define type aliases using Any for mypy type checking
+_SearchQuery: TypeAlias = Any
+_SearchResult: TypeAlias = Any
+_SearchResults: TypeAlias = Any
 
 
 original_abstractmethods: frozenset[str] = getattr(BaseAzureAISearchTool, "__abstractmethods__", frozenset())
@@ -152,38 +160,29 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         self._client = mock_client
         return mock_client
 
-    async def run(
-        self, args: Dict[str, Any], cancellation_token: Optional[CancellationToken] = None
-    ) -> List[Dict[str, Any]]:
-        """Run the tool with the given args."""
+    async def run(self, query: _SearchQuery, cancellation_token: Optional[CancellationToken] = None) -> _SearchResults:
+        """Run the search with the given query."""
         if cancellation_token and getattr(cancellation_token, "cancelled", False):
             raise Exception("Operation cancelled")
 
-        return await self.run_json(args, cancellation_token or CancellationToken())
+        # Get the query parameters
+        query_dict = {}
+        if hasattr(query, "model_dump"):
+            query_dict = query.model_dump()
+        elif hasattr(query, "dict"):  # For backwards compatibility with older Pydantic
+            query_dict = query.dict()
+        else:
+            # Fallback for plain dict or other object
+            query_dict = dict(query) if hasattr(query, "__iter__") else {}
 
-    async def run_json(
-        self, args: Dict[str, Any], cancellation_token: Optional[CancellationToken] = None
-    ) -> List[Dict[str, Any]]:
-        """Run the tool with the given JSON args."""
-
-        if cancellation_token is not None and hasattr(cancellation_token, "cancelled"):
-            is_cancelled = False
-            if callable(cancellation_token.cancelled):
-                is_cancelled = cancellation_token.cancelled()
-            else:
-                is_cancelled = bool(cancellation_token.cancelled)
-
-            if is_cancelled:
-                raise Exception("Operation cancelled")
-
-        query = args.get("query", "")
-        vector = args.get("vector", None)
-        filter_expr = args.get("filter", None)
-        top = args.get("top", self.search_config.top)
+        query_text = query_dict.get("query", "")
+        vector = query_dict.get("vector", None)
+        filter_expr = query_dict.get("filter", None)
+        top = query_dict.get("top", self.search_config.top)
 
         client = await self._get_client()
 
-        search_text: str = query
+        search_text: str = query_text
         vectors: Optional[List[Dict[str, Any]]] = None
 
         kwargs: Dict[str, Any] = {}
@@ -198,7 +197,7 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             kwargs["query_type"] = "simple"
 
         if self._query_type == "vector" or self._vector_fields:
-            vector_value = vector if vector is not None else await self._get_embedding(query)
+            vector_value = vector if vector is not None else await self._get_embedding(query_text)
 
             if self._vector_fields:
                 vector_list = [{"value": vector_value, "fields": field, "k": top} for field in self._vector_fields]
@@ -240,9 +239,11 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             },
         ]
 
+        # Call the search method on the client
         await client.search(search_text, **kwargs)
 
-        search_results = []
+        # Process the mock results
+        results = []
         for result in mock_results:
             score = cast(float, result.get("@search.score", 0.0))
 
@@ -256,15 +257,58 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             if isinstance(metadata_obj, dict):
                 metadata = metadata_obj
 
-            search_results.append(
-                {
-                    "score": score,
-                    "content": content,
-                    "metadata": metadata,
-                }
+            results.append(
+                SearchResult(
+                    score=score,
+                    content=content,
+                    metadata=metadata,
+                )
             )
 
-        return search_results
+        # Cast to SearchResults type to help mypy
+        return cast(_SearchResults, SearchResults(results=results))
+
+    def return_value_as_string(self, value: _SearchResults) -> str:
+        """Convert the search results to a string representation.
+
+        This is a custom implementation for testing purposes that provides
+        a more detailed output than the base class implementation.
+
+        Args:
+            value (_SearchResults): The search results to format as a string
+
+        Returns:
+            str: A formatted string representation of the search results
+        """
+        # Use cast to handle the value as Any type to avoid mypy errors
+        results = cast(Any, value).results if hasattr(value, "results") else []
+
+        if not results:
+            return "No search results found."
+
+        result_strings = []
+        for i, result in enumerate(results, 1):
+            # Format the content as a string of key-value pairs
+            content_items = []
+            for key, val in result.content.items():
+                content_items.append(f"{key}: {val}")
+
+            # Join the content items with commas
+            content_str = ", ".join(content_items)
+
+            # Add any metadata if present
+            metadata_str = ""
+            if result.metadata:
+                metadata_items = []
+                for key, val in result.metadata.items():
+                    metadata_items.append(f"{key}: {val}")
+                metadata_str = f" [Metadata: {', '.join(metadata_items)}]"
+
+            # Create the result string
+            result_strings.append(f"Result {i} (Score: {result.score:.2f}): {content_str}{metadata_str}")
+
+        # Return all results joined by newlines
+        return "\n".join(result_strings)
 
 
 class AsyncIterator:
@@ -395,19 +439,19 @@ async def test_simple_search(test_config: ComponentModel) -> None:
         mock_client.search = AsyncMock()
         mock_client.search.return_value = AsyncIterator(search_results)
         with patch.object(tool, "_get_client", return_value=mock_client):
-            results = await tool.run_json({"query": "test query"}, CancellationToken())
+            search_results_obj = await tool.run(SearchQuery(query="test query"), CancellationToken())
 
-            assert isinstance(results, list)
-            assert len(results) == 2
-            for result in results:
-                assert isinstance(result, dict)
-                assert "score" in result
-                assert "content" in result
-                assert "metadata" in result
+            assert isinstance(search_results_obj, SearchResults)
+            assert len(search_results_obj.results) == 2
+            for result in search_results_obj.results:
+                assert isinstance(result, SearchResult)
+                assert hasattr(result, "score")
+                assert hasattr(result, "content")
+                assert hasattr(result, "metadata")
 
-            assert results[0]["score"] == 0.95
-            assert results[0]["content"]["id"] == "doc1"
-            assert results[0]["content"]["title"] == "Document 1"
+            assert search_results_obj.results[0].score == 0.95
+            assert search_results_obj.results[0].content["id"] == "doc1"
+            assert search_results_obj.results[0].content["title"] == "Document 1"
             mock_client.search.assert_called_once()
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
@@ -427,7 +471,7 @@ async def test_semantic_search(semantic_config: ComponentModel) -> None:
         mock_client.search = AsyncMock(return_value=AsyncIterator(MOCK_SEARCH_RESPONSE))
 
         with patch.object(tool, "_get_client", return_value=mock_client):
-            await tool.run_json({"query": "test query"}, CancellationToken())
+            await tool.run(SearchQuery(query="test query"), CancellationToken())
             mock_client.search.assert_called_once()
             args, kwargs = mock_client.search.call_args
 
@@ -471,7 +515,7 @@ async def test_vector_search(vector_config: ComponentModel) -> None:
 
             mock_client.return_value = mock_client_instance
             with patch.object(tool, "_get_client", return_value=mock_client.return_value):
-                await tool.run_json({"query": "test query"}, CancellationToken())
+                await tool.run(SearchQuery(query="test query"), CancellationToken())
                 mock_client_instance.search.assert_called_once()
                 args, kwargs = mock_client_instance.search.call_args
                 assert args[0] == ""
@@ -487,11 +531,11 @@ async def test_error_handling_resource_not_found(test_config: ComponentModel) ->
         tool = MockAzureAISearchTool.load_component(test_config)
         error_msg = "Resource 'test-index' not found"
 
-        with patch.object(tool, "run_json", autospec=True) as mock_run_json:
-            mock_run_json.side_effect = Exception(error_msg)
+        with patch.object(tool, "run", autospec=True) as mock_run:
+            mock_run.side_effect = Exception(error_msg)
 
             with pytest.raises(Exception) as excinfo:
-                await tool.run_json({"query": "test query"}, CancellationToken())
+                await tool.run(SearchQuery(query="test query"), CancellationToken())
 
             assert "not found" in str(excinfo.value).lower()
 
@@ -504,18 +548,16 @@ async def test_cancellation(test_config: ComponentModel) -> None:
 
     mock_tool = MockAzureAISearchTool.load_component(test_config)
 
-    async def cancel_side_effect(
-        args: Dict[str, Any], cancellation_token: Optional[CancellationToken] = None
-    ) -> List[Dict[str, Any]]:
+    async def cancel_side_effect(query: Any, cancellation_token: Optional[CancellationToken] = None) -> Any:
         if cancellation_token and cancellation_token.is_cancelled():
             raise Exception("Operation cancelled by test")
-        return []
+        return SearchResults(results=[])
 
-    with patch.object(mock_tool, "run_json", autospec=True) as mock_run_json:
-        mock_run_json.side_effect = cancel_side_effect
+    with patch.object(mock_tool, "run", autospec=True) as mock_run:
+        mock_run.side_effect = cancel_side_effect
 
         with pytest.raises(Exception) as excinfo:
-            await mock_tool.run_json({"query": "test query"}, token)
+            await mock_tool.run(SearchQuery(query="test query"), token)
 
         assert "cancelled" in str(excinfo.value).lower()
 
@@ -564,55 +606,71 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
 
     mock_client = AsyncMock()
 
-    sample_results = [
-        {
-            "score": 0.95,
-            "content": {
-                "id": "doc1",
-                "content": "This is the first document content",
-                "title": "Document 1",
-                "source": "test-source-1",
-            },
-            "metadata": {},
-        },
-        {
-            "score": 0.85,
-            "content": {
-                "id": "doc2",
-                "content": "This is the second document content",
-                "title": "Document 2",
-                "source": "test-source-2",
-            },
-            "metadata": {},
-        },
-    ]
+    # Create sample results that will be returned by our mocked run method
+    sample_results = SearchResults(
+        results=[
+            SearchResult(
+                score=0.95,
+                content={
+                    "id": "doc1",
+                    "content": "This is the first document content",
+                    "title": "Document 1",
+                    "source": "test-source-1",
+                },
+                metadata={},
+            ),
+            SearchResult(
+                score=0.85,
+                content={
+                    "id": "doc2",
+                    "content": "This is the second document content",
+                    "title": "Document 2",
+                    "source": "test-source-2",
+                },
+                metadata={},
+            ),
+        ]
+    )
 
-    async def search_side_effect(
-        args: Dict[str, Any], cancellation_token: Optional[CancellationToken] = None
-    ) -> List[Dict[str, Any]]:
+    # Define the side effect function for our patched run method
+    async def search_side_effect(query: Any, cancellation_token: Optional[CancellationToken] = None) -> Any:
+        # Verify the mock client search hasn't been called yet
         mock_client.search.assert_not_called()
-        await run_json_original(args, cancellation_token)
+
+        # Call the original run method to execute the client.search call
+        await run_original(query, cancellation_token)
+
+        # Return our sample results
         return sample_results
 
     with patch.object(tool, "_get_client", return_value=mock_client) as mock_get_client:
         mock_client.search = AsyncMock()
 
-        run_json_original = tool.run_json
+        # Store the original run method
+        run_original = tool.run
 
-        with patch.object(tool, "run_json", side_effect=search_side_effect):
-            result = await tool.run_json({"query": "test query"}, CancellationToken())
+        # Patch the run method with our side effect
+        with patch.object(tool, "run", side_effect=search_side_effect):
+            # Call the run method with our test query
+            result = await tool.run(SearchQuery(query="test query"), CancellationToken())
 
+            # Verify _get_client was called
             mock_get_client.assert_called_once()
 
+            # Verify search was called
             mock_client.search.assert_called_once()
 
+            # Check arguments passed to search
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
 
+            # Verify semantic search parameters
             assert "query_type" in kwargs
             assert kwargs["query_type"] == "semantic"
 
+            # Verify vectors were included
             assert "vectors" in kwargs
 
-            assert len(result) == 2
-            assert result[0]["score"] == 0.95
+            # Verify we got back our sample results
+            assert len(result.results) == 2
+            assert result.results[0].score == 0.95

@@ -500,21 +500,6 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
         return cast(T, target_class._from_config(config))
 
-    async def run_json(
-        self, args: Union[Dict[str, Any], Any], cancellation_token: CancellationToken
-    ) -> List[Dict[str, Any]]:
-        """Run the tool with JSON arguments and return JSON-serializable results.
-
-        Args:
-            args (Union[Dict[str, Any], Any]): The arguments for the tool.
-            cancellation_token (CancellationToken): A token that can be used to cancel the operation.
-
-        Returns:
-            List[Dict[str, Any]]: A list of search results as dictionaries.
-        """
-        search_results = await self.run(SearchQuery(**args), cancellation_token)
-        return [result.model_dump() for result in search_results.results]
-
     def return_value_as_string(self, value: SearchResults) -> str:
         """Convert the search results to a string representation.
 
