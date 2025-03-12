@@ -42,13 +42,11 @@ if spec_config.loader is None:
 spec_config.loader.exec_module(config_module)
 
 BaseAzureAISearchTool = ai_search_module.BaseAzureAISearchTool
-# Type aliases for mypy
 SearchQuery = ai_search_module.SearchQuery
 SearchResult = ai_search_module.SearchResult
 SearchResults = ai_search_module.SearchResults
 AzureAISearchConfig = config_module.AzureAISearchConfig
 
-# Define type aliases using Any for mypy type checking
 _SearchQuery: TypeAlias = Any
 _SearchResult: TypeAlias = Any
 _SearchResults: TypeAlias = Any
@@ -165,14 +163,12 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         if cancellation_token and getattr(cancellation_token, "cancelled", False):
             raise Exception("Operation cancelled")
 
-        # Get the query parameters
         query_dict = {}
         if hasattr(query, "model_dump"):
             query_dict = query.model_dump()
-        elif hasattr(query, "dict"):  # For backwards compatibility with older Pydantic
+        elif hasattr(query, "dict"):
             query_dict = query.dict()
         else:
-            # Fallback for plain dict or other object
             query_dict = dict(query) if hasattr(query, "__iter__") else {}
 
         query_text = query_dict.get("query", "")
@@ -239,10 +235,8 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             },
         ]
 
-        # Call the search method on the client
         await client.search(search_text, **kwargs)
 
-        # Process the mock results
         results = []
         for result in mock_results:
             score = cast(float, result.get("@search.score", 0.0))
@@ -265,7 +259,6 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
                 )
             )
 
-        # Cast to SearchResults type to help mypy
         return cast(_SearchResults, SearchResults(results=results))
 
     def return_value_as_string(self, value: _SearchResults) -> str:
@@ -280,7 +273,6 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         Returns:
             str: A formatted string representation of the search results
         """
-        # Use cast to handle the value as Any type to avoid mypy errors
         results = cast(Any, value).results if hasattr(value, "results") else []
 
         if not results:
@@ -288,15 +280,12 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
 
         result_strings = []
         for i, result in enumerate(results, 1):
-            # Format the content as a string of key-value pairs
             content_items = []
             for key, val in result.content.items():
                 content_items.append(f"{key}: {val}")
 
-            # Join the content items with commas
             content_str = ", ".join(content_items)
 
-            # Add any metadata if present
             metadata_str = ""
             if result.metadata:
                 metadata_items = []
@@ -304,10 +293,8 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
                     metadata_items.append(f"{key}: {val}")
                 metadata_str = f" [Metadata: {', '.join(metadata_items)}]"
 
-            # Create the result string
             result_strings.append(f"Result {i} (Score: {result.score:.2f}): {content_str}{metadata_str}")
 
-        # Return all results joined by newlines
         return "\n".join(result_strings)
 
 
@@ -606,7 +593,6 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
 
     mock_client = AsyncMock()
 
-    # Create sample results that will be returned by our mocked run method
     sample_results = SearchResults(
         results=[
             SearchResult(
@@ -632,45 +618,23 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
         ]
     )
 
-    # Define the side effect function for our patched run method
     async def search_side_effect(query: Any, cancellation_token: Optional[CancellationToken] = None) -> Any:
-        # Verify the mock client search hasn't been called yet
         mock_client.search.assert_not_called()
-
-        # Call the original run method to execute the client.search call
         await run_original(query, cancellation_token)
-
-        # Return our sample results
         return sample_results
 
     with patch.object(tool, "_get_client", return_value=mock_client) as mock_get_client:
         mock_client.search = AsyncMock()
 
-        # Store the original run method
         run_original = tool.run
-
-        # Patch the run method with our side effect
         with patch.object(tool, "run", side_effect=search_side_effect):
-            # Call the run method with our test query
             result = await tool.run(SearchQuery(query="test query"), CancellationToken())
-
-            # Verify _get_client was called
             mock_get_client.assert_called_once()
-
-            # Verify search was called
             mock_client.search.assert_called_once()
-
-            # Check arguments passed to search
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
-
-            # Verify semantic search parameters
             assert "query_type" in kwargs
             assert kwargs["query_type"] == "semantic"
-
-            # Verify vectors were included
             assert "vectors" in kwargs
-
-            # Verify we got back our sample results
             assert len(result.results) == 2
             assert result.results[0].score == 0.95
