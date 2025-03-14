@@ -45,18 +45,32 @@ class MockHttpResponseError(Exception):
         super().__init__(message)
 
 
-sys.modules["azure"] = MagicMock()  # type: ignore
-sys.modules["azure.core"] = MagicMock()  # type: ignore
-sys.modules["azure.core.credentials"] = MagicMock()  # type: ignore
-sys.modules["azure.core.exceptions"] = MagicMock()  # type: ignore
-sys.modules["azure.search"] = MagicMock()  # type: ignore
-sys.modules["azure.search.documents"] = MagicMock()  # type: ignore
-sys.modules["azure.search.documents.aio"] = MagicMock()  # type: ignore
+class MockModule(MagicMock):
+    """A mock class that allows attribute access to create further mock objects."""
 
-sys.modules["azure.core.credentials"].AzureKeyCredential = MockAzureKeyCredential  # type: ignore
-sys.modules["azure.core.credentials"].TokenCredential = MockTokenCredential  # type: ignore
-sys.modules["azure.core.exceptions"].ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
-sys.modules["azure.core.exceptions"].HttpResponseError = MockHttpResponseError  # type: ignore
+    def __getattr__(self, name: str) -> "MockModule":
+        """Return a new MockModule for any attribute access."""
+        return MockModule()
+
+
+azure_mock = MockModule()
+
+sys.modules["azure"] = azure_mock
+sys.modules["azure.core"] = azure_mock.core
+sys.modules["azure.core.credentials"] = azure_mock.core.credentials
+sys.modules["azure.core.exceptions"] = azure_mock.core.exceptions
+sys.modules["azure.search"] = azure_mock.search
+sys.modules["azure.search.documents"] = azure_mock.search.documents
+sys.modules["azure.search.documents.aio"] = azure_mock.search.documents.aio
+sys.modules["azure.search.documents.indexes"] = azure_mock.search.documents.indexes
+
+mock_credentials = sys.modules["azure.core.credentials"]
+mock_credentials.AzureKeyCredential = MockAzureKeyCredential  # type: ignore
+mock_credentials.TokenCredential = MockTokenCredential  # type: ignore
+
+mock_exceptions = sys.modules["azure.core.exceptions"]
+mock_exceptions.ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
+mock_exceptions.HttpResponseError = MockHttpResponseError  # type: ignore
 
 
 @pytest.fixture
