@@ -65,6 +65,14 @@ class SimpleMock:
         """Make the mock callable."""
         return SimpleMock()
 
+    def __iter__(self) -> Any:
+        """Make the mock iterable to support module imports."""
+        return iter(())
+
+    def __dir__(self) -> List[str]:
+        """Return list of attributes for dir() and attribute completions."""
+        return list(self._attributes.keys())
+
 
 azure_mock = SimpleMock()
 
