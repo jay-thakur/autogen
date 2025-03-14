@@ -395,7 +395,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                     if vector_arg is not None:
                         vector_sample = vector_arg[:3] if len(vector_arg) > 3 else vector_arg
                         vector_elements = [str(float(v)) for v in vector_sample]
-                        vector_part = f"_vector_{",".join(vector_elements)}"
+                        vector_part = f"_vector_{','.join(vector_elements)}"
                 except (AttributeError, TypeError, ValueError):
                     pass
 
