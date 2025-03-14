@@ -48,9 +48,11 @@ class MockHttpResponseError(Exception):
 class MockModule(MagicMock):
     """A mock class that allows attribute access to create further mock objects."""
 
-    def __getattr__(self, name: str) -> "MockModule":
-        """Return a new MockModule for any attribute access."""
-        return MockModule()
+    def __getattr__(self, name: str) -> MagicMock:
+        """Return a new MagicMock for any attribute access."""
+        mock = MagicMock()
+        setattr(self, name, mock)
+        return mock
 
 
 azure_mock = MockModule()
