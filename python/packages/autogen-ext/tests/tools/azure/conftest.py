@@ -83,7 +83,29 @@ sys.modules["azure.core.exceptions"] = cast(ModuleType, azure_mock.core.exceptio
 sys.modules["azure.search"] = cast(ModuleType, azure_mock.search)  # type: ignore
 sys.modules["azure.search.documents"] = cast(ModuleType, azure_mock.search.documents)  # type: ignore
 sys.modules["azure.search.documents.aio"] = cast(ModuleType, azure_mock.search.documents.aio)  # type: ignore
+sys.modules["azure.search.documents.models"] = cast(ModuleType, azure_mock.search.documents.models)  # type: ignore
 sys.modules["azure.search.documents.indexes"] = cast(ModuleType, azure_mock.search.documents.indexes)  # type: ignore
+sys.modules["azure.search.documents.indexes.models"] = cast(ModuleType, azure_mock.search.documents.indexes.models)  # type: ignore
+
+doc_aio = sys.modules["azure.search.documents.aio"]
+doc_aio.SearchClient = MagicMock  # type: ignore
+
+doc_models = sys.modules["azure.search.documents.models"]
+doc_models.VectorizedQuery = MagicMock  # type: ignore
+doc_models.QueryType = MagicMock  # type: ignore
+doc_models.QueryLanguage = MagicMock  # type: ignore
+doc_models.SemanticSearch = MagicMock  # type: ignore
+doc_models.SearchOptions = MagicMock  # type: ignore
+
+index_module = sys.modules["azure.search.documents.indexes"]
+index_module.SearchIndexClient = MagicMock  # type: ignore
+
+index_models = sys.modules["azure.search.documents.indexes.models"]
+index_models.SearchIndex = MagicMock  # type: ignore
+index_models.SearchField = MagicMock  # type: ignore
+index_models.SearchableField = MagicMock  # type: ignore
+index_models.SimpleField = MagicMock  # type: ignore
+index_models.SearchFieldDataType = MagicMock  # type: ignore
 
 mock_credentials: Any = sys.modules["azure.core.credentials"]
 mock_credentials.AzureKeyCredential = MockAzureKeyCredential
