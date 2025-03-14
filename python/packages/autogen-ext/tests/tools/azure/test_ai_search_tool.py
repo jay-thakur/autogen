@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from autogen_core import CancellationToken, ComponentModel
-from pydantic import BaseModel
 
 src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 sys.path.insert(0, src_dir)
@@ -233,14 +232,14 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
 
         await client.search(search_text, **kwargs)
 
-        results = []
+        results: List[Any] = []
         for result in mock_results:
             score = cast(float, result.get("@search.score", 0.0))
 
             content = {}
-            for field in result:
-                if isinstance(field, str) and not field.startswith("@"):
-                    content[field] = result.get(field, "")
+            for content_key, content_val in result.items():
+                if isinstance(content_key, str) and not content_key.startswith("@"):
+                    content[content_key] = content_val
 
             metadata = {}
             metadata_obj = result.get("@metadata")
@@ -269,27 +268,34 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         Returns:
             str: A formatted string representation of the search results
         """
-        results = cast(Any, value).results if hasattr(value, "results") else []
+        results: List[Any] = []
+        if hasattr(value, "results"):
+            results = value.results
 
         if not results:
             return "No search results found."
 
-        result_strings = []
+        result_strings: List[str] = []
         for i, result in enumerate(results, 1):
-            content_items = []
-            for key, val in result.content.items():
-                content_items.append(f"{key}: {val}")
+            content_items: List[str] = []
+            if hasattr(result, "content") and hasattr(result.content, "items"):
+                for content_key, content_val in result.content.items():
+                    content_key_str = str(content_key)
+                    content_items.append(f"{content_key_str}: {content_val}")
 
             content_str = ", ".join(content_items)
 
-            metadata_str = ""
-            if result.metadata:
-                metadata_items = []
-                for key, val in result.metadata.items():
-                    metadata_items.append(f"{key}: {val}")
-                metadata_str = f" [Metadata: {', '.join(metadata_items)}]"
+            metadata_items: List[str] = []
+            if hasattr(result, "metadata") and hasattr(result.metadata, "items"):
+                for meta_key, meta_val in result.metadata.items():
+                    meta_key_str = str(meta_key)
+                    metadata_items.append(f"{meta_key_str}={meta_val}")
+            metadata_str = f" [Metadata: {', '.join(metadata_items)}]"
 
-            result_strings.append(f"Result {i} (Score: {result.score:.2f}): {content_str}{metadata_str}")
+            score = 0.0
+            if hasattr(result, "score"):
+                score = float(result.score)
+            result_strings.append(f"Result {i} (Score: {score:.2f}): {content_str}{metadata_str}")
 
         return "\n".join(result_strings)
 

@@ -12,7 +12,7 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast, overload
 
 from autogen_core import CancellationToken, ComponentModel
 from autogen_core.tools import BaseTool
@@ -21,22 +21,22 @@ from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.search.documents.aio import SearchClient
 from pydantic import BaseModel, Field
 
+_has_retry_policy = False
+
 try:
-    from azure.core.pipeline.policies import RetryPolicy
-    HAS_RETRY_POLICY = True
+    from azure.core.pipeline.policies import RetryPolicy  # type: ignore[assignment]
+
+    _has_retry_policy = True
 except ImportError:
-    HAS_RETRY_POLICY = False
-    
+
     class RetryPolicy:  # type: ignore
         def __init__(self, retry_mode: str = "fixed", retry_total: int = 3, **kwargs: Any) -> None:
-            """Dummy implementation of RetryPolicy.__init__ that will never be used.
-            
-            Args:
-                retry_mode: The retry mode to use
-                retry_total: Maximum number of retry attempts
-                **kwargs: Additional arguments
-            """
             pass
+
+    _has_retry_policy = False
+
+HAS_RETRY_POLICY = _has_retry_policy
+
 
 if TYPE_CHECKING:
     import openai
@@ -100,6 +100,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="BaseAzureAISearchTool")
+ExpectedType = TypeVar("ExpectedType")
 
 
 class SearchQuery(BaseModel):
@@ -251,7 +252,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
             if HAS_RETRY_POLICY and getattr(self.search_config, "retry_enabled", False):
                 try:
-                    retry_policy = RetryPolicy(
+                    retry_policy: Any = RetryPolicy(
                         retry_mode=getattr(self.search_config, "retry_mode", "fixed"),
                         retry_total=getattr(self.search_config, "retry_max_attempts", 3),
                     )
@@ -329,18 +330,14 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                     vector = await self._get_embedding(args.query)
 
                 if self.search_config.vector_fields:
-                    vectors = [
+                    vector_fields_list = self.search_config.vector_fields
+                    search_options["vectors"] = [
                         {
                             "value": vector,
-                            "fields": field,
+                            "fields": ",".join(vector_fields_list),
                             "k": int(self.search_config.top or 5),
                         }
-                        for field in self.search_config.vector_fields
                     ]
-                    search_options["vectors"] = vectors
-
-                    if self.search_config.query_type == "vector":
-                        text_query = ""
 
             if cancellation_token.is_cancelled():
                 raise Exception("Operation cancelled")
@@ -349,9 +346,27 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             results: List[SearchResult] = []
 
             async with client:
-                search_results: Any = await client.search(text_query, **search_options)
-                async for doc in search_results:
-                    doc_dict: Dict[str, Any] = doc
+                search_results = await client.search(text_query, **search_options)  # type: ignore
+                async for doc in search_results:  # type: ignore
+                    search_doc: Any = doc
+                    doc_dict: Dict[str, Any] = {}
+
+                    try:
+                        if hasattr(search_doc, "items") and callable(search_doc.items):
+                            dict_like_doc = cast(Dict[str, Any], search_doc)
+                            for key, value in dict_like_doc.items():
+                                doc_dict[str(key)] = value
+                        else:
+                            for key in [
+                                k
+                                for k in dir(search_doc)
+                                if not k.startswith("_") and not callable(getattr(search_doc, k, None))
+                            ]:
+                                doc_dict[key] = getattr(search_doc, key)
+                    except Exception as e:
+                        logger.warning(f"Error processing search document: {e}")
+                        continue
+
                     metadata: Dict[str, Any] = {}
                     content: Dict[str, Any] = {}
                     for key, value in doc_dict.items():
@@ -361,10 +376,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         else:
                             content[key_str] = value
 
-                    if "@search.score" in doc:
-                        score = doc["@search.score"]
-                    else:
-                        score = 0.0
+                    score: float = 0.0
+                    if "@search.score" in doc_dict:
+                        score = float(doc_dict["@search.score"])
 
                     result = SearchResult(
                         score=score,
@@ -374,6 +388,18 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                     results.append(result)
 
             if self.search_config.enable_caching:
+                cache_key = f"{text_query}_{args.filter}_{args.top}"
+                vector_part = ""
+                try:
+                    vector_arg = getattr(args, "vector", None)
+                    if vector_arg is not None:
+                        vector_sample = vector_arg[:3] if len(vector_arg) > 3 else vector_arg
+                        vector_elements = [str(float(v)) for v in vector_sample]
+                        vector_part = f"_vector_{",".join(vector_elements)}"
+                except (AttributeError, TypeError, ValueError):
+                    pass
+
+                cache_key = f"{cache_key}{vector_part}"
                 self._cache[cache_key] = {"results": results, "timestamp": time.time()}
 
             return SearchResults(results=results)
@@ -481,27 +507,43 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             top=config.top,
         )
 
+    @overload
     @classmethod
     def load_component(
-        cls: Type[T],
+        cls, model: Union[ComponentModel, Dict[str, Any]], expected: None = None
+    ) -> "BaseAzureAISearchTool": ...
+
+    @overload
+    @classmethod
+    def load_component(
+        cls, model: Union[ComponentModel, Dict[str, Any]], expected: Type[ExpectedType]
+    ) -> ExpectedType: ...
+
+    @classmethod
+    def load_component(
+        cls,
         model: Union[ComponentModel, Dict[str, Any]],
-        expected: Optional[Type[T]] = None,
-    ) -> T:
+        expected: Optional[Type[ExpectedType]] = None,
+    ) -> Union["BaseAzureAISearchTool", ExpectedType]:
         """Load the tool from a component model.
 
         Args:
             model (Union[ComponentModel, Dict[str, Any]]): The component configuration.
-            expected (Optional[Type[T]]): Optional component class for deserialization.
+            expected (Optional[Type[ExpectedType]]): Optional component class for deserialization.
 
         Returns:
-            T: An instance of the tool.
+            Union[BaseAzureAISearchTool, ExpectedType]: An instance of the tool.
 
         Raises:
             ValueError: If the component configuration is invalid.
         """
-        target_class = expected if expected is not None else cls
+        if expected is not None and not issubclass(expected, BaseAzureAISearchTool):
+            raise TypeError(f"Cannot create instance of {expected} from AzureAISearchConfig")
 
-        if hasattr(model, "config") and isinstance(model.config, dict):
+        target_class = expected if expected is not None else cls
+        assert hasattr(target_class, "_from_config"), f"{target_class} has no _from_config method"
+
+        if isinstance(model, ComponentModel) and hasattr(model, "config"):
             config_dict = model.config
         elif isinstance(model, dict):
             config_dict = model
@@ -510,7 +552,10 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
         config = AzureAISearchConfig(**config_dict)
 
-        return cast(T, target_class._from_config(config))
+        tool = target_class._from_config(config)
+        if expected is None:
+            return tool
+        return cast(ExpectedType, tool)
 
     def return_value_as_string(self, value: SearchResults) -> str:
         """Convert the search results to a string representation.
@@ -527,7 +572,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         if not value.results:
             return "No results found."
 
-        result_strings = []
+        result_strings: List[str] = []
         for i, result in enumerate(value.results, 1):
             content_str = ", ".join(f"{k}: {v}" for k, v in result.content.items())
             result_strings.append(f"Result {i} (Score: {result.score:.2f}): {content_str}")
@@ -663,8 +708,8 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
 
             embeddings = [item.embedding for item in response.data]
 
-            result = []
-            empty_vector = [0.0] * 1536
+            result: List[List[float]] = []
+            empty_vector: List[float] = [0.0] * 1536
 
             embedding_idx = 0
             for query in queries:
@@ -850,7 +895,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
 
         vector_fields_str = os.getenv(f"{env_prefix}_VECTOR_FIELDS")
         if vector_fields_str:
-            config_kwargs["vector_fields"] = [field.strip() for field in vector_fields_str.split(",")]
+            config_kwargs["vector_fields"] = vector_fields_str
 
         semantic_config = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
         if semantic_config:
