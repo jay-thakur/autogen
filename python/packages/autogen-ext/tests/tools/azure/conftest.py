@@ -2,7 +2,8 @@
 
 import sys
 import warnings
-from typing import Any, Dict, List
+from types import ModuleType
+from typing import Any, Dict, List, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,34 +46,44 @@ class MockHttpResponseError(Exception):
         super().__init__(message)
 
 
-class MockModule(MagicMock):
-    """A mock class that allows attribute access to create further mock objects."""
-
-    def __getattr__(self, name: str) -> MagicMock:
-        """Return a new MagicMock for any attribute access."""
-        mock = MagicMock()
-        setattr(self, name, mock)
-        return mock
+T = TypeVar("T", bound="SimpleMock")
 
 
-azure_mock = MockModule()
+class SimpleMock:
+    """A simple module mock that doesn't suffer from recursion issues."""
 
-sys.modules["azure"] = azure_mock
-sys.modules["azure.core"] = azure_mock.core
-sys.modules["azure.core.credentials"] = azure_mock.core.credentials
-sys.modules["azure.core.exceptions"] = azure_mock.core.exceptions
-sys.modules["azure.search"] = azure_mock.search
-sys.modules["azure.search.documents"] = azure_mock.search.documents
-sys.modules["azure.search.documents.aio"] = azure_mock.search.documents.aio
-sys.modules["azure.search.documents.indexes"] = azure_mock.search.documents.indexes
+    def __init__(self) -> None:
+        self._attributes: Dict[str, "SimpleMock"] = {}
 
-mock_credentials = sys.modules["azure.core.credentials"]
-mock_credentials.AzureKeyCredential = MockAzureKeyCredential  # type: ignore
-mock_credentials.TokenCredential = MockTokenCredential  # type: ignore
+    def __getattr__(self, name: str) -> "SimpleMock":
+        """Return a new SimpleMock for any attribute access."""
+        if name not in self._attributes:
+            self._attributes[name] = SimpleMock()
+        return self._attributes[name]
 
-mock_exceptions = sys.modules["azure.core.exceptions"]
-mock_exceptions.ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
-mock_exceptions.HttpResponseError = MockHttpResponseError  # type: ignore
+    def __call__(self, *args: Any, **kwargs: Any) -> "SimpleMock":
+        """Make the mock callable."""
+        return SimpleMock()
+
+
+azure_mock = SimpleMock()
+
+sys.modules["azure"] = cast(ModuleType, azure_mock)  # type: ignore
+sys.modules["azure.core"] = cast(ModuleType, azure_mock.core)  # type: ignore
+sys.modules["azure.core.credentials"] = cast(ModuleType, azure_mock.core.credentials)  # type: ignore
+sys.modules["azure.core.exceptions"] = cast(ModuleType, azure_mock.core.exceptions)  # type: ignore
+sys.modules["azure.search"] = cast(ModuleType, azure_mock.search)  # type: ignore
+sys.modules["azure.search.documents"] = cast(ModuleType, azure_mock.search.documents)  # type: ignore
+sys.modules["azure.search.documents.aio"] = cast(ModuleType, azure_mock.search.documents.aio)  # type: ignore
+sys.modules["azure.search.documents.indexes"] = cast(ModuleType, azure_mock.search.documents.indexes)  # type: ignore
+
+mock_credentials: Any = sys.modules["azure.core.credentials"]
+mock_credentials.AzureKeyCredential = MockAzureKeyCredential
+mock_credentials.TokenCredential = MockTokenCredential
+
+mock_exceptions: Any = sys.modules["azure.core.exceptions"]
+mock_exceptions.ResourceNotFoundError = MockResourceNotFoundError
+mock_exceptions.HttpResponseError = MockHttpResponseError
 
 
 @pytest.fixture
