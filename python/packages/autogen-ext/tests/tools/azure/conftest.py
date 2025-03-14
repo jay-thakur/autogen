@@ -2,7 +2,7 @@
 
 import sys
 import warnings
-from typing import Any, Dict, List, Optional, Type, TypeVar, Union, cast
+from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,8 +75,6 @@ def test_config() -> ComponentModel:
             "search_fields": ["content", "title"],
             "select_fields": ["id", "content", "title", "source"],
             "top": 5,
-            "openai_client": MagicMock(),
-            "embedding_model": "mock-embedding-model",
         },
     )
 

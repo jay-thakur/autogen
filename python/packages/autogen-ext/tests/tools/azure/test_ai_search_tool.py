@@ -3,13 +3,11 @@
 import importlib.util
 import os
 import sys
-import types
-from typing import Any, Dict, List, Optional, Type, TypeAlias, Union, cast
+from typing import Any, Dict, List, Optional, Type, TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from autogen_core import CancellationToken, ComponentModel
-from autogen_core.tools import BaseTool
 from pydantic import BaseModel
 
 src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
@@ -116,11 +114,9 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         }
 
     @classmethod
-    def load_component(
-        cls, component_model: ComponentModel, component_class: Optional[Type[Any]] = None
-    ) -> "MockAzureAISearchTool":
+    def load_component(cls, model: ComponentModel, expected: Optional[Type[Any]] = None) -> "MockAzureAISearchTool":
         """Load component from model."""
-        return cls(**component_model.config)
+        return cls(**model.config)
 
     def dump_component(self) -> ComponentModel:
         """Dump component to model."""
@@ -158,7 +154,7 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         self._client = mock_client
         return mock_client
 
-    async def run(self, query: _SearchQuery, cancellation_token: Optional[CancellationToken] = None) -> _SearchResults:
+    async def run(self, query: Any, cancellation_token: Optional[CancellationToken] = None) -> Any:
         """Run the search with the given query."""
         if cancellation_token and getattr(cancellation_token, "cancelled", False):
             raise Exception("Operation cancelled")
@@ -259,9 +255,9 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
                 )
             )
 
-        return cast(_SearchResults, SearchResults(results=results))
+        return SearchResults(results=results)
 
-    def return_value_as_string(self, value: _SearchResults) -> str:
+    def return_value_as_string(self, value: Any) -> str:
         """Convert the search results to a string representation.
 
         This is a custom implementation for testing purposes that provides
@@ -636,5 +632,5 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
             assert "query_type" in kwargs
             assert kwargs["query_type"] == "semantic"
             assert "vectors" in kwargs
-            assert len(result.results) == 2
-            assert result.results[0].score == 0.95
+            assert len(getattr(result, "results", [])) == 2
+            assert getattr(result.results[0], "score", 0) == 0.95

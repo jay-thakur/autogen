@@ -7,12 +7,10 @@ For more information about Azure AI Search, see:
 https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
 """
 
-import abc
 import asyncio
 import logging
 import random
 import time
-import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast
 
@@ -25,10 +23,20 @@ from pydantic import BaseModel, Field
 
 try:
     from azure.core.pipeline.policies import RetryPolicy
-
     HAS_RETRY_POLICY = True
 except ImportError:
     HAS_RETRY_POLICY = False
+    
+    class RetryPolicy:  # type: ignore
+        def __init__(self, retry_mode: str = "fixed", retry_total: int = 3, **kwargs: Any) -> None:
+            """Dummy implementation of RetryPolicy.__init__ that will never be used.
+            
+            Args:
+                retry_mode: The retry mode to use
+                retry_total: Maximum number of retry attempts
+                **kwargs: Additional arguments
+            """
+            pass
 
 if TYPE_CHECKING:
     import openai
@@ -72,7 +80,6 @@ try:
 except ImportError:
     import importlib.util
     import os
-    import sys
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(current_dir, "_config.py")
@@ -243,11 +250,14 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             }
 
             if HAS_RETRY_POLICY and getattr(self.search_config, "retry_enabled", False):
-                retry_policy = RetryPolicy(
-                    retry_mode=getattr(self.search_config, "retry_mode", "fixed"),
-                    retry_total=getattr(self.search_config, "retry_max_attempts", 3),
-                )
-                client_args["retry_policy"] = retry_policy
+                try:
+                    retry_policy = RetryPolicy(
+                        retry_mode=getattr(self.search_config, "retry_mode", "fixed"),
+                        retry_total=getattr(self.search_config, "retry_max_attempts", 3),
+                    )
+                    client_args["retry_policy"] = retry_policy
+                except Exception as e:
+                    logging.warning(f"Failed to create RetryPolicy: {e}")
 
             self._client = SearchClient(**client_args)
 
@@ -339,15 +349,17 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             results: List[SearchResult] = []
 
             async with client:
-                search_results = await client.search(text_query, **search_options)
+                search_results: Any = await client.search(text_query, **search_options)
                 async for doc in search_results:
+                    doc_dict: Dict[str, Any] = doc
                     metadata: Dict[str, Any] = {}
                     content: Dict[str, Any] = {}
-                    for key, value in doc.items():
-                        if key.startswith("@") or key.startswith("_"):
-                            metadata[key] = value
+                    for key, value in doc_dict.items():
+                        key_str: str = str(key)
+                        if key_str.startswith("@") or key_str.startswith("_"):
+                            metadata[key_str] = value
                         else:
-                            content[key] = value
+                            content[key_str] = value
 
                     if "@search.score" in doc:
                         score = doc["@search.score"]
@@ -472,14 +484,14 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
     @classmethod
     def load_component(
         cls: Type[T],
-        component_config: Union[ComponentModel, Dict[str, Any]],
-        component_class: Optional[Type[T]] = None,
+        model: Union[ComponentModel, Dict[str, Any]],
+        expected: Optional[Type[T]] = None,
     ) -> T:
         """Load the tool from a component model.
 
         Args:
-            component_config (Union[ComponentModel, Dict[str, Any]]): The component configuration.
-            component_class (Optional[Type[T]]): Optional component class for deserialization.
+            model (Union[ComponentModel, Dict[str, Any]]): The component configuration.
+            expected (Optional[Type[T]]): Optional component class for deserialization.
 
         Returns:
             T: An instance of the tool.
@@ -487,14 +499,14 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         Raises:
             ValueError: If the component configuration is invalid.
         """
-        target_class = component_class if component_class is not None else cls
+        target_class = expected if expected is not None else cls
 
-        if hasattr(component_config, "config") and isinstance(component_config.config, dict):
-            config_dict = component_config.config
-        elif isinstance(component_config, dict):
-            config_dict = component_config
+        if hasattr(model, "config") and isinstance(model.config, dict):
+            config_dict = model.config
+        elif isinstance(model, dict):
+            config_dict = model
         else:
-            raise ValueError(f"Invalid component configuration: {component_config}")
+            raise ValueError(f"Invalid component configuration: {model}")
 
         config = AzureAISearchConfig(**config_dict)
 

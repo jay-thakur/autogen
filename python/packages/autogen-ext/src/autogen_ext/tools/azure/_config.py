@@ -7,7 +7,6 @@ settings for authentication, search behavior, retry policies, and caching.
 import logging
 from typing import (
     Any,
-    Callable,
     Dict,
     List,
     Literal,
@@ -15,7 +14,6 @@ from typing import (
     Type,
     TypeVar,
     Union,
-    cast,
 )
 
 from azure.core.credentials import AzureKeyCredential, TokenCredential
