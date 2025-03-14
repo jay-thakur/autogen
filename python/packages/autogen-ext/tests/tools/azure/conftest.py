@@ -2,8 +2,7 @@
 
 import sys
 import warnings
-from types import ModuleType
-from typing import Any, Dict, List, TypeVar, cast
+from typing import Any, Dict, Generator, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -46,74 +45,36 @@ class MockHttpResponseError(Exception):
         super().__init__(message)
 
 
-T = TypeVar("T", bound="SimpleMock")
+for module_name in [
+    "azure.core",
+    "azure.core.credentials",
+    "azure.core.exceptions",
+    "azure.search.documents",
+    "azure.search.documents.aio",
+    "azure.search.documents.models",
+    "azure.search.documents.indexes",
+    "azure.search.documents.indexes.models",
+    "azure.cosmos",
+    "azure.storage.blob",
+]:
+    if module_name not in sys.modules:
+        sys.modules[module_name] = MagicMock()
 
 
-class SimpleMock:
-    """A simple module mock that doesn't suffer from recursion issues."""
+credentials = sys.modules["azure.core.credentials"]
+credentials.AzureKeyCredential = MockAzureKeyCredential  # type: ignore
+credentials.TokenCredential = MockTokenCredential  # type: ignore
 
-    def __init__(self) -> None:
-        self._attributes: Dict[str, "SimpleMock"] = {}
-
-    def __getattr__(self, name: str) -> "SimpleMock":
-        """Return a new SimpleMock for any attribute access."""
-        if name not in self._attributes:
-            self._attributes[name] = SimpleMock()
-        return self._attributes[name]
-
-    def __call__(self, *args: Any, **kwargs: Any) -> "SimpleMock":
-        """Make the mock callable."""
-        return SimpleMock()
-
-    def __iter__(self) -> Any:
-        """Make the mock iterable to support module imports."""
-        return iter(())
-
-    def __dir__(self) -> List[str]:
-        """Return list of attributes for dir() and attribute completions."""
-        return list(self._attributes.keys())
+exceptions = sys.modules["azure.core.exceptions"]
+exceptions.ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
+exceptions.HttpResponseError = MockHttpResponseError  # type: ignore
 
 
-azure_mock = SimpleMock()
-
-sys.modules["azure"] = cast(ModuleType, azure_mock)  # type: ignore
-sys.modules["azure.core"] = cast(ModuleType, azure_mock.core)  # type: ignore
-sys.modules["azure.core.credentials"] = cast(ModuleType, azure_mock.core.credentials)  # type: ignore
-sys.modules["azure.core.exceptions"] = cast(ModuleType, azure_mock.core.exceptions)  # type: ignore
-sys.modules["azure.search"] = cast(ModuleType, azure_mock.search)  # type: ignore
-sys.modules["azure.search.documents"] = cast(ModuleType, azure_mock.search.documents)  # type: ignore
-sys.modules["azure.search.documents.aio"] = cast(ModuleType, azure_mock.search.documents.aio)  # type: ignore
-sys.modules["azure.search.documents.models"] = cast(ModuleType, azure_mock.search.documents.models)  # type: ignore
-sys.modules["azure.search.documents.indexes"] = cast(ModuleType, azure_mock.search.documents.indexes)  # type: ignore
-sys.modules["azure.search.documents.indexes.models"] = cast(ModuleType, azure_mock.search.documents.indexes.models)  # type: ignore
-
-doc_aio = sys.modules["azure.search.documents.aio"]
-doc_aio.SearchClient = MagicMock  # type: ignore
-
-doc_models = sys.modules["azure.search.documents.models"]
-doc_models.VectorizedQuery = MagicMock  # type: ignore
-doc_models.QueryType = MagicMock  # type: ignore
-doc_models.QueryLanguage = MagicMock  # type: ignore
-doc_models.SemanticSearch = MagicMock  # type: ignore
-doc_models.SearchOptions = MagicMock  # type: ignore
-
-index_module = sys.modules["azure.search.documents.indexes"]
-index_module.SearchIndexClient = MagicMock  # type: ignore
-
-index_models = sys.modules["azure.search.documents.indexes.models"]
-index_models.SearchIndex = MagicMock  # type: ignore
-index_models.SearchField = MagicMock  # type: ignore
-index_models.SearchableField = MagicMock  # type: ignore
-index_models.SimpleField = MagicMock  # type: ignore
-index_models.SearchFieldDataType = MagicMock  # type: ignore
-
-mock_credentials: Any = sys.modules["azure.core.credentials"]
-mock_credentials.AzureKeyCredential = MockAzureKeyCredential
-mock_credentials.TokenCredential = MockTokenCredential
-
-mock_exceptions: Any = sys.modules["azure.core.exceptions"]
-mock_exceptions.ResourceNotFoundError = MockResourceNotFoundError
-mock_exceptions.HttpResponseError = MockHttpResponseError
+@pytest.fixture
+def mock_vectorized_query() -> Generator[MagicMock, None, None]:
+    """Create a mock VectorizedQuery for testing."""
+    with patch("azure.search.documents.models.VectorizedQuery") as mock:
+        yield mock
 
 
 @pytest.fixture
