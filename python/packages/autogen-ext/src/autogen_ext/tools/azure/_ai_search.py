@@ -7,11 +7,10 @@ For more information about Azure AI Search, see:
 https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
 """
 
-import asyncio
 import logging
-import random
 import time
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast, overload
 
 from autogen_core import CancellationToken, ComponentModel
@@ -155,7 +154,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
     .. note::
         Requires Azure AI Search service and appropriate credentials.
         Compatible with Azure AI Search API versions 2023-07-01-Preview and above.
-        
+
     .. important::
         For vector search functionality, your Azure AI Search index must contain vector fields
         populated with OpenAI-compatible embeddings. The embeddings in your index should be
@@ -163,11 +162,11 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
     Quick Start:
         .. code-block:: python
-            
+
             # Basic setup with API key
             from autogen_core import ComponentModel
             from autogen_ext.tools.azure import AzureAISearchTool
-            
+
             # Create search tool with minimal configuration
             search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
@@ -177,11 +176,11 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         "endpoint": "https://your-search-service.search.windows.net",
                         "index_name": "your-index",
                         "credential": {"api_key": "your-api-key"},
-                        "query_type": "simple"
+                        "query_type": "simple",
                     },
                 )
             )
-            
+
             # Run a search
             results = await search_tool.run_json(args={"query": "your search query"})
             print(f"Found {len(results.results)} results")
@@ -788,28 +787,18 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         return "\n".join(result_strings)
 
 
+_allow_private_constructor = ContextVar("_allow_private_constructor", default=False)
+
+
 class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
-    """Azure AI Search tool with OpenAI embeddings.
+    """A tool for performing searches using Azure AI Search with OpenAI embeddings.
 
-    This implementation uses OpenAI's embedding models to generate vectors for search queries.
+    This tool extends the base Azure AI Search tool with OpenAI embedding capabilities
+    for generating vector embeddings at query time.
 
-    Args:
-        openai_client (Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]): An initialized async OpenAI client
-        embedding_model (str): The name of the embedding model to use
-        name (str): Name for the tool instance.
-        endpoint (str): The full URL of your Azure AI Search service.
-        index_name (str): Name of the search index to query.
-        credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Azure credential for authentication.
-        description (Optional[str]): Optional description explaining the tool's purpose.
-        api_version (str): Azure AI Search API version to use.
-        semantic_config_name (Optional[str]): Name of the semantic configuration.
-        query_type (str): The type of search to perform ("simple", "full", "semantic", "vector").
-        search_fields (Optional[List[str]]): Fields to search within documents.
-        select_fields (Optional[List[str]]): Fields to return in search results.
-        vector_fields (Optional[List[str]]): Fields to use for vector search.
-        top (Optional[int]): Maximum number of results to return.
-        max_retries (int): Maximum number of retries for OpenAI API calls (default: 3)
-        retry_delay (float): Base delay in seconds between retries (default: 1.0)
+    Note:
+        Do not initialize this class directly. Use factory methods like
+        create_semantic_search(), create_vector_search(), or load_component() instead.
     """
 
     def __init__(
@@ -831,6 +820,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> None:
+        if not _allow_private_constructor.get():
+            raise RuntimeError(
+                "Constructor is private. Use factory methods like create_semantic_search(), "
+                "create_vector_search(), or load_component() instead."
+            )
+
         super().__init__(
             name=name,
             endpoint=endpoint,
@@ -860,101 +855,84 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
-    async def _get_embedding(self, query: str) -> List[float]:
-        """Generate embedding using OpenAI's async client with retry mechanism.
+    @classmethod
+    @overload
+    def load_component(
+        cls, model: Union[ComponentModel, Dict[str, Any]], expected: None = None
+    ) -> "OpenAIAzureAISearchTool": ...
 
-        This method includes exponential backoff retry logic to handle transient errors
-        and rate limiting from the OpenAI API.
+    @classmethod
+    @overload
+    def load_component(
+        cls, model: Union[ComponentModel, Dict[str, Any]], expected: Type[ExpectedType]
+    ) -> ExpectedType: ...
 
-        Args:
-            query (str): The text to generate embeddings for
-
-        Returns:
-            List[float]: The embedding vector as a list of floats
-
-        Raises:
-            Exception: If embedding generation fails after retries
-        """
-        if not query:
-            logger.warning("Empty query provided for embedding generation")
-            return [0.0] * 1536
-
-        retry_count = 0
-        last_exception = None
-
-        while retry_count <= self.max_retries:
-            try:
-                response = await self.openai_client.embeddings.create(input=query, model=self.embedding_model)
-                return response.data[0].embedding
-
-            except Exception as e:
-                last_exception = e
-                retry_count += 1
-
-                should_retry = False
-
-                if "rate_limit" in str(e).lower() or "too_many_requests" in str(e).lower():
-                    should_retry = True
-                    logger.warning(f"Rate limit hit with OpenAI API, retrying ({retry_count}/{self.max_retries})")
-
-                elif "connection" in str(e).lower() or "timeout" in str(e).lower():
-                    should_retry = True
-                    logger.warning(f"Network error with OpenAI API, retrying ({retry_count}/{self.max_retries})")
-
-                elif "server_error" in str(e).lower() or "internal" in str(e).lower():
-                    should_retry = True
-                    logger.warning(f"Server error with OpenAI API, retrying ({retry_count}/{self.max_retries})")
-
-                if not should_retry or retry_count > self.max_retries:
-                    break
-
-                await asyncio.sleep(self.retry_delay * (2 ** (retry_count - 1)) * (0.5 + random.random()))
-
-        logger.error(f"Failed to generate embedding after {self.max_retries} retries: {last_exception}")
-        raise Exception(f"Embedding generation failed: {last_exception}") from last_exception
-
-    async def _get_embeddings_batch(self, queries: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple queries in a single request.
-
-        This batched approach is more efficient when processing multiple queries.
+    @classmethod
+    def load_component(
+        cls, model: Union[ComponentModel, Dict[str, Any]], expected: Optional[Type[ExpectedType]] = None
+    ) -> Union["OpenAIAzureAISearchTool", ExpectedType]:
+        """Load a component from a component model.
 
         Args:
-            queries (List[str]): List of texts to generate embeddings for
+            model: The component model or dictionary with configuration
+            expected: Optional expected return type
 
         Returns:
-            List[List[float]]: List of embedding vectors
-
-        Raises:
-            Exception: If embedding generation fails
+            An initialized OpenAIAzureAISearchTool instance
         """
-        if not queries:
-            return [[0.0] * 1536] * len(queries)
-
-        non_empty_queries = [q for q in queries if q]
-        if not non_empty_queries:
-            return [[0.0] * 1536] * len(queries)
-
+        token = _allow_private_constructor.set(True)
         try:
-            response = await self.openai_client.embeddings.create(input=non_empty_queries, model=self.embedding_model)
+            if isinstance(model, dict):
+                model = ComponentModel(**model)
 
-            embeddings = [item.embedding for item in response.data]
+            config = model.config
 
-            result: List[List[float]] = []
-            empty_vector: List[float] = [0.0] * 1536
+            query_type_str = config.get("query_type", "simple")
+            query_type: Literal["simple", "full", "semantic", "vector"]
 
-            embedding_idx = 0
-            for query in queries:
-                if query:
-                    result.append(embeddings[embedding_idx])
-                    embedding_idx += 1
-                else:
-                    result.append(empty_vector)
+            if query_type_str == "simple":
+                query_type = "simple"
+            elif query_type_str == "full":
+                query_type = "full"
+            elif query_type_str == "semantic":
+                query_type = "semantic"
+            elif query_type_str == "vector":
+                query_type = "vector"
+            else:
+                query_type = "simple"
 
-            return result
+            openai_client = config.get("openai_client")
+            if openai_client is None:
+                raise ValueError("openai_client must be provided in config")
 
-        except Exception as e:
-            logger.error(f"Failed to generate batch embeddings: {e}")
-            raise Exception(f"Batch embedding generation failed: {e}") from e
+            embedding_model = config.get("embedding_model", "")
+            if not embedding_model:
+                raise ValueError("embedding_model must be specified in config")
+
+            instance = cls(
+                openai_client=openai_client,
+                embedding_model=embedding_model,
+                name=config.get("name", ""),
+                endpoint=config.get("endpoint", ""),
+                index_name=config.get("index_name", ""),
+                credential=config.get("credential", {}),
+                description=config.get("description"),
+                api_version=config.get("api_version", "2023-11-01"),
+                semantic_config_name=config.get("semantic_config_name"),
+                query_type=query_type,
+                search_fields=config.get("search_fields"),
+                select_fields=config.get("select_fields"),
+                vector_fields=config.get("vector_fields"),
+                top=config.get("top"),
+                max_retries=config.get("max_retries", 3),
+                retry_delay=config.get("retry_delay", 1.0),
+            )
+
+            if expected is not None:
+                return cast(ExpectedType, instance)
+            return instance
+        finally:
+            _allow_private_constructor.reset(token)
 
     @classmethod
     def create_semantic_search(
@@ -968,32 +946,22 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         semantic_config_name: str,
         **kwargs: Any,
     ) -> "OpenAIAzureAISearchTool":
-        """Factory method to create a semantic search tool.
-
-        Args:
-            openai_client (Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"]): The OpenAI client for embeddings
-            embedding_model (str): The embedding model to use
-            name (str): The name of the tool
-            endpoint (str): The Azure AI Search endpoint
-            index_name (str): The name of the search index
-            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): The credential for authentication
-            semantic_config_name (str): The semantic configuration name
-            **kwargs (Any): Additional arguments
-
-        Returns:
-            An initialized semantic search tool
-        """
-        return cls(
-            openai_client=openai_client,
-            embedding_model=embedding_model,
-            name=name,
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=credential,
-            query_type="semantic",
-            semantic_config_name=semantic_config_name,
-            **kwargs,
-        )
+        """Factory method to create a semantic search tool."""
+        token = _allow_private_constructor.set(True)
+        try:
+            return cls(
+                openai_client=openai_client,
+                embedding_model=embedding_model,
+                name=name,
+                endpoint=endpoint,
+                index_name=index_name,
+                credential=credential,
+                query_type="semantic",
+                semantic_config_name=semantic_config_name,
+                **kwargs,
+            )
+        finally:
+            _allow_private_constructor.reset(token)
 
     @classmethod
     def create_vector_search(
@@ -1007,32 +975,22 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         vector_fields: List[str],
         **kwargs: Any,
     ) -> "OpenAIAzureAISearchTool":
-        """Factory method to create a vector search tool.
-
-        Args:
-            openai_client (Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"]): The OpenAI client for embeddings
-            embedding_model (str): The embedding model to use
-            name (str): The name of the tool
-            endpoint (str): The Azure AI Search endpoint
-            index_name (str): The name of the search index
-            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): The credential for authentication
-            vector_fields (List[str]): The vector fields to search
-            **kwargs (Any): Additional arguments
-
-        Returns:
-            An initialized vector search tool
-        """
-        return cls(
-            openai_client=openai_client,
-            embedding_model=embedding_model,
-            name=name,
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=credential,
-            query_type="vector",
-            vector_fields=vector_fields,
-            **kwargs,
-        )
+        """Factory method to create a vector search tool."""
+        token = _allow_private_constructor.set(True)
+        try:
+            return cls(
+                openai_client=openai_client,
+                embedding_model=embedding_model,
+                name=name,
+                endpoint=endpoint,
+                index_name=index_name,
+                credential=credential,
+                query_type="vector",
+                vector_fields=vector_fields,
+                **kwargs,
+            )
+        finally:
+            _allow_private_constructor.reset(token)
 
     @classmethod
     def create_hybrid_search(
@@ -1047,34 +1005,23 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         semantic_config_name: str,
         **kwargs: Any,
     ) -> "OpenAIAzureAISearchTool":
-        """Factory method to create a hybrid search tool (semantic + vector).
-
-        Args:
-            openai_client (Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"]): The OpenAI client for embeddings
-            embedding_model (str): The embedding model to use
-            name (str): The name of the tool
-            endpoint (str): The Azure AI Search endpoint
-            index_name (str): The name of the search index
-            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): The credential for authentication
-            vector_fields (List[str]): The vector fields to search
-            semantic_config_name (str): The semantic configuration name
-            **kwargs (Any): Additional arguments
-
-        Returns:
-            An initialized hybrid search tool
-        """
-        return cls(
-            openai_client=openai_client,
-            embedding_model=embedding_model,
-            name=name,
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=credential,
-            query_type="semantic",
-            vector_fields=vector_fields,
-            semantic_config_name=semantic_config_name,
-            **kwargs,
-        )
+        """Factory method to create a hybrid search tool."""
+        token = _allow_private_constructor.set(True)
+        try:
+            return cls(
+                openai_client=openai_client,
+                embedding_model=embedding_model,
+                name=name,
+                endpoint=endpoint,
+                index_name=index_name,
+                credential=credential,
+                query_type="semantic",
+                vector_fields=vector_fields,
+                semantic_config_name=semantic_config_name,
+                **kwargs,
+            )
+        finally:
+            _allow_private_constructor.reset(token)
 
     @classmethod
     def from_env(
@@ -1086,107 +1033,62 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         **kwargs: Any,
     ) -> "OpenAIAzureAISearchTool":
         """Create a search tool instance from environment variables."""
-        import os
+        token = _allow_private_constructor.set(True)
+        try:
+            import os
 
-        endpoint = os.getenv(f"{env_prefix}_ENDPOINT")
-        index_name = os.getenv(f"{env_prefix}_INDEX_NAME")
-        api_key = os.getenv(f"{env_prefix}_API_KEY")
+            endpoint = os.getenv(f"{env_prefix}_ENDPOINT")
+            index_name = os.getenv(f"{env_prefix}_INDEX_NAME")
+            api_key = os.getenv(f"{env_prefix}_API_KEY")
 
-        if not endpoint or not index_name or not api_key:
-            raise ValueError(
-                f"Missing required environment variables. Please set {env_prefix}_ENDPOINT, "
-                f"{env_prefix}_INDEX_NAME, and {env_prefix}_API_KEY."
+            if not endpoint or not index_name or not api_key:
+                raise ValueError(
+                    f"Missing required environment variables. Please set {env_prefix}_ENDPOINT, "
+                    f"{env_prefix}_INDEX_NAME, and {env_prefix}_API_KEY."
+                )
+
+            api_version = os.getenv(f"{env_prefix}_API_VERSION", "2023-11-01")
+            query_type_str = os.getenv(f"{env_prefix}_QUERY_TYPE", "simple")
+
+            valid_query_types = ["simple", "full", "semantic", "vector"]
+            if query_type_str not in valid_query_types:
+                raise ValueError(
+                    f"Invalid query type: {query_type_str}. Must be one of: {', '.join(valid_query_types)}"
+                )
+
+            query_type: Literal["simple", "full", "semantic", "vector"]
+            if query_type_str == "simple":
+                query_type = "simple"
+            elif query_type_str == "full":
+                query_type = "full"
+            elif query_type_str == "semantic":
+                query_type = "semantic"
+            else:
+                query_type = "vector"
+
+            credential = {"api_key": api_key}
+
+            vector_fields = None
+            vector_fields_str = os.getenv(f"{env_prefix}_VECTOR_FIELDS")
+            if vector_fields_str:
+                vector_fields = vector_fields_str.split(",")
+
+            semantic_config_name = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
+
+            additional_params = kwargs.copy()
+
+            return cls(
+                openai_client=openai_client,
+                embedding_model=embedding_model,
+                name=name,
+                endpoint=endpoint,
+                index_name=index_name,
+                credential=credential,
+                api_version=api_version,
+                query_type=query_type,
+                vector_fields=vector_fields,
+                semantic_config_name=semantic_config_name,
+                **additional_params,
             )
-
-        api_version = os.getenv(f"{env_prefix}_API_VERSION", "2023-11-01")
-        query_type_str = os.getenv(f"{env_prefix}_QUERY_TYPE", "simple")
-
-        valid_query_types = ["simple", "full", "semantic", "vector"]
-        if query_type_str not in valid_query_types:
-            raise ValueError(f"Invalid query type: {query_type_str}. Must be one of: {', '.join(valid_query_types)}")
-
-        query_type: Literal["simple", "full", "semantic", "vector"]
-        if query_type_str == "simple":
-            query_type = "simple"
-        elif query_type_str == "full":
-            query_type = "full"
-        elif query_type_str == "semantic":
-            query_type = "semantic"
-        else:
-            query_type = "vector"
-
-        credential = {"api_key": api_key}
-
-        vector_fields = None
-        vector_fields_str = os.getenv(f"{env_prefix}_VECTOR_FIELDS")
-        if vector_fields_str:
-            vector_fields = vector_fields_str.split(",")
-
-        semantic_config_name = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
-
-        additional_params = kwargs.copy()
-
-        return cls(
-            openai_client=openai_client,
-            embedding_model=embedding_model,
-            name=name,
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=credential,
-            api_version=api_version,
-            query_type=query_type,
-            vector_fields=vector_fields,
-            semantic_config_name=semantic_config_name,
-            **additional_params,
-        )
-
-    @classmethod
-    def _from_config(cls, config: Any) -> "OpenAIAzureAISearchTool":
-        """Create an instance from a configuration object.
-
-        Args:
-            config: The configuration object containing search tool settings
-
-        Returns:
-            An initialized OpenAIAzureAISearchTool instance
-        """
-        query_type_str = getattr(config, "query_type", "simple")
-        query_type: Literal["simple", "full", "semantic", "vector"]
-
-        if query_type_str == "simple":
-            query_type = "simple"
-        elif query_type_str == "full":
-            query_type = "full"
-        elif query_type_str == "semantic":
-            query_type = "semantic"
-        elif query_type_str == "vector":
-            query_type = "vector"
-        else:
-            query_type = "simple"
-
-        openai_client_attr = getattr(config, "openai_client", None)
-        if openai_client_attr is None:
-            raise ValueError("openai_client must be provided in config")
-
-        embedding_model_attr = getattr(config, "embedding_model", "")
-        if not embedding_model_attr:
-            raise ValueError("embedding_model must be specified in config")
-
-        return cls(
-            openai_client=openai_client_attr,
-            embedding_model=embedding_model_attr,
-            name=getattr(config, "name", ""),
-            endpoint=getattr(config, "endpoint", ""),
-            index_name=getattr(config, "index_name", ""),
-            credential=getattr(config, "credential", {}),
-            description=getattr(config, "description", None),
-            api_version=getattr(config, "api_version", "2023-11-01"),
-            semantic_config_name=getattr(config, "semantic_config_name", None),
-            query_type=query_type,
-            search_fields=getattr(config, "search_fields", None),
-            select_fields=getattr(config, "select_fields", None),
-            vector_fields=getattr(config, "vector_fields", None),
-            top=getattr(config, "top", None),
-            max_retries=getattr(config, "max_retries", 3),
-            retry_delay=getattr(config, "retry_delay", 1.0),
-        )
+        finally:
+            _allow_private_constructor.reset(token)
