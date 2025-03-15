@@ -2,102 +2,42 @@
 
 This module provides tools for integrating Azure services with AutoGen.
 
-## Azure AI Search Tool
+## Documentation
 
-The Azure AI Search tool enables agents to search through documents and data stored in Azure AI Search indexes.
+Detailed documentation, including usage examples, API reference, and configuration options, is now available in the module and class docstrings.
 
-### Installation
+Please refer to:
+
+- Module docstring in `_ai_search.py` for overview and quick start guide
+- Class docstrings in `OpenAIAzureAISearchTool` for comprehensive API documentation
+- Factory methods documentation for specialized search tool creation
+
+## Installation
 
 ```bash
 pip install "autogen-ext[azure]"
 ```
 
-### Features
-
-- **Simple Search**: Basic keyword-based search
-- **Semantic Search**: AI-powered search with semantic ranking
-- **Vector Search**: Similarity search using embeddings
-- **Hybrid Search**: Combines text and vector search for optimal results
-- **Resilient Operation**: Built-in retry logic and error handling
-- **Environment Variable Support**: Secure credential management
-
-### Usage Examples
-
-#### Basic Setup
+## Quick Start
 
 ```python
-from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-from azure.core.credentials import AzureKeyCredential
-import openai
+from autogen_core import ComponentModel
+from autogen_ext.tools.azure import AzureAISearchTool
 
-# Initialize the async OpenAI client
-openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
-
-# Create the search tool
-search_tool = OpenAIAzureAISearchTool(
-    openai_client=openai_client,
-    embedding_model="text-embedding-ada-002",
-    name="document_search",
-    endpoint="https://your-search-service.search.windows.net",
-    index_name="your-index",
-    credential=AzureKeyCredential("your-api-key"),
-    query_type="vector",
-    vector_fields=["embedding"]
-)
-
-# Use in an async function
-async def search_documents():
-    from autogen_core import CancellationToken
-    
-    results = await search_tool.run_json(
-        {
-            "query": "financial reports",
-            "filter": "year eq 2023 and department eq 'Finance'"
-        },
-        CancellationToken()
+# Create a search tool with minimal configuration
+search_tool = AzureAISearchTool.load_component(
+    ComponentModel(
+        provider="autogen_ext.tools.azure.AzureAISearchTool",
+        config={
+            "name": "AzureSearch",
+            "endpoint": "https://your-search-service.search.windows.net",
+            "index_name": "your-index",
+            "credential": {"api_key": "your-api-key"},
+            "query_type": "simple"
+        }
     )
-    return results
-```
-
-#### Using Factory Methods
-
-```python
-# Create a semantic search tool
-semantic_search = OpenAIAzureAISearchTool.create_semantic_search(
-    openai_client=openai_client,
-    embedding_model="text-embedding-ada-002",
-    name="semantic_search",
-    endpoint="https://your-search-service.search.windows.net",
-    index_name="your-index",
-    credential=AzureKeyCredential("your-api-key"),
-    semantic_config_name="default"
-)
-
-# Create a vector search tool
-vector_search = OpenAIAzureAISearchTool.create_vector_search(
-    openai_client=openai_client,
-    embedding_model="text-embedding-ada-002",
-    name="vector_search",
-    endpoint="https://your-search-service.search.windows.net",
-    index_name="your-index",
-    credential=AzureKeyCredential("your-api-key"),
-    vector_fields=["embedding"]
-)
-
-# Create a hybrid search tool
-hybrid_search = OpenAIAzureAISearchTool.create_hybrid_search(
-    openai_client=openai_client,
-    embedding_model="text-embedding-ada-002",
-    name="hybrid_search",
-    endpoint="https://your-search-service.search.windows.net",
-    index_name="your-index",
-    credential=AzureKeyCredential("your-api-key"),
-    vector_fields=["embedding"],
-    semantic_config_name="default"
 )
 ```
-
-#### Using Environment Variables
 
 Set up your environment variables:
 

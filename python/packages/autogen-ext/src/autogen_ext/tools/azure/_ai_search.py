@@ -1,7 +1,46 @@
-"""Azure AI Search tool implementation.
+"""Azure AI Search Tool for AutoGen
 
-This module provides a tool for querying Azure AI Search indexes using various search methods
-including text search, semantic search, and vector search.
+This module provides tools for querying Azure AI Search indexes using various search methods
+including simple text search, full text search, semantic search, and vector search.
+
+Overview:
+    The Azure AI Search tools allow agents to search and retrieve information from
+    Azure AI Search indexes. The main tool class is OpenAIAzureAISearchTool, which
+    combines Azure AI Search with OpenAI embeddings for advanced search capabilities.
+
+Features:
+    - Simple text search: Basic keyword matching
+    - Full text search: Enhanced text analysis with Azure's full-text capabilities
+    - Semantic search: Understanding the meaning of queries using Azure's semantic ranking
+    - Vector search: Using OpenAI embeddings for similarity matching
+
+Quick Start:
+    ```python
+    from autogen_core import ComponentModel
+    from autogen_ext.tools.azure import AzureAISearchTool
+
+    # Create a search tool with minimal configuration
+    search_tool = AzureAISearchTool.load_component(
+        ComponentModel(
+            provider="autogen_ext.tools.azure.AzureAISearchTool",
+            config={
+                "name": "AzureSearch",
+                "endpoint": "https://your-search-service.search.windows.net",
+                "index_name": "your-index",
+                "credential": {"api_key": "your-api-key"},
+                "query_type": "simple",
+            },
+        )
+    )
+
+    # Run a search
+    results = await search_tool.run_json(args={"query": "your search query"})
+    ```
+
+Requirements:
+    - An Azure AI Search service
+    - Appropriate credentials (API key or Azure AD credentials)
+    - For vector search: An index with vector fields populated with OpenAI-compatible embeddings
 
 For more information about Azure AI Search, see:
 https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
