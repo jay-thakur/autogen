@@ -144,32 +144,211 @@ class SearchResults(BaseModel):
 
 
 class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
-    """Tool for performing intelligent search operations using Azure AI Search.
+    """A tool for performing searches using Azure AI Search.
 
-    This is an abstract base class that requires subclasses to implement the _get_embedding method
-    for vector search capabilities.
+    This tool integrates with Azure AI Search to perform different types of searches:
+    - Simple text search: Basic keyword matching for straightforward queries
+    - Full text search: Enhanced text analysis with language processing
+    - Semantic search: Understanding the meaning and context of queries
+    - Vector search: Using embeddings for similarity and conceptual matching
 
-    Azure AI Search (formerly Azure Cognitive Search) provides enterprise-grade search capabilities
-    including semantic ranking, vector similarity, and hybrid approaches for optimal information retrieval.
+    .. note::
+        Requires Azure AI Search service and appropriate credentials.
+        Compatible with Azure AI Search API versions 2023-07-01-Preview and above.
 
-    Key Features:
-        * Full-text search with linguistic analysis
-        * Semantic search with AI-powered ranking
-        * Vector similarity search using embeddings
-        * Hybrid search combining multiple approaches
-        * Faceted navigation and filtering
+    Quick Start:
+        .. code-block:: python
 
-    Note:
-        The search results from Azure AI Search may contain arbitrary content from the indexed documents.
-        Applications should implement appropriate content filtering and validation when displaying results
-        to end users.
+            # Basic setup with API key
+            from autogen_core import ComponentModel
+            from autogen_ext.tools.azure import AzureAISearchTool
 
-    External Documentation:
-        * Azure AI Search Overview: https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
-        * REST API Reference: https://learn.microsoft.com/en-us/rest/api/searchservice/
-        * Python SDK: https://learn.microsoft.com/en-us/python/api/overview/azure/search-documents-readme
+            # Create search tool with minimal configuration
+            search_tool = AzureAISearchTool.load_component(
+                ComponentModel(
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
+                    config={
+                        "name": "AzureSearch",
+                        "endpoint": "https://your-search-service.search.windows.net",
+                        "index_name": "your-index",
+                        "credential": {"api_key": "your-api-key"},
+                        "query_type": "simple",
+                    },
+                )
+            )
+
+            # Run a search
+            results = await search_tool.run_json(args={"query": "your search query"})
+            print(f"Found {len(results.results)} results")
+
+    Examples:
+        .. code-block:: python
+
+            # Simple text search example
+            from autogen_core import ComponentModel
+            from autogen_ext.tools.azure import AzureAISearchTool
+
+            # Create a tool instance with API key
+            search_tool = AzureAISearchTool.load_component(
+                ComponentModel(
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
+                    config={
+                        "name": "AzureSearch",
+                        "description": "Search documents in Azure AI Search",
+                        "endpoint": "https://your-search-service.search.windows.net",
+                        "index_name": "your-index",
+                        "api_version": "2023-10-01-Preview",
+                        "credential": {"api_key": "your-api-key"},
+                        "query_type": "simple",
+                        "search_fields": ["content", "title"],
+                        "select_fields": ["id", "content", "title", "source"],
+                        "top": 5,
+                    },
+                )
+            )
+
+            # Run a simple search
+            result = await search_tool.run_json(args={"query": "machine learning techniques"})
+
+            # Process results
+            for item in result.results:
+                print(f"Score: {item.score}, Content: {item.content}")
+
+            # Search with filtering
+            filtered_result = await search_tool.run_json(
+                args={"query": "neural networks", "filter": "source eq 'academic-papers'"}
+            )
+
+        .. code-block:: python
+
+            # Semantic search with OpenAI embeddings
+            from openai import AsyncOpenAI
+
+            # Initialize OpenAI client
+            openai_client = AsyncOpenAI(api_key="your-openai-api-key")
+
+            # Create semantic search tool
+            semantic_search_tool = AzureAISearchTool.load_component(
+                ComponentModel(
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
+                    config={
+                        "name": "SemanticSearch",
+                        "description": "Semantic search with Azure AI Search",
+                        "endpoint": "https://your-search-service.search.windows.net",
+                        "index_name": "your-index",
+                        "api_version": "2023-10-01-Preview",
+                        "credential": {"api_key": "your-api-key"},
+                        "query_type": "semantic",
+                        "semantic_config_name": "your-semantic-config",
+                        "search_fields": ["content", "title"],
+                        "select_fields": ["id", "content", "title", "source"],
+                        "openai_client": openai_client,
+                        "embedding_model": "text-embedding-ada-002",
+                        "top": 5,
+                    },
+                )
+            )
+
+            # Perform a semantic search
+            try:
+                result = await semantic_search_tool.run_json(args={"query": "latest advances in neural networks"})
+                print(f"Found {len(result.results)} results")
+            except Exception as e:
+                print(f"Search error: {e}")
+
+        .. code-block:: python
+
+            # Vector search example
+            # Create vector search tool
+            vector_search_tool = AzureAISearchTool.load_component(
+                ComponentModel(
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
+                    config={
+                        "name": "VectorSearch",
+                        "description": "Vector search with Azure AI Search",
+                        "endpoint": "https://your-search-service.search.windows.net",
+                        "index_name": "your-index",
+                        "api_version": "2023-10-01-Preview",
+                        "credential": {"api_key": "your-api-key"},
+                        "query_type": "vector",
+                        "vector_fields": ["embedding"],
+                        "select_fields": ["id", "content", "title", "source"],
+                        "openai_client": openai_client,
+                        "embedding_model": "text-embedding-ada-002",
+                        "top": 5,
+                    },
+                )
+            )
+
+            # Perform a vector search with a text query (will be converted to vector)
+            result = await vector_search_tool.run_json(args={"query": "quantum computing algorithms"})
+
+            # Or use a pre-computed vector directly
+            vector = [0.1, 0.2, 0.3, 0.4]  # Example vector (would be much longer in practice)
+            result = await vector_search_tool.run_json(args={"vector": vector})
+
+    Using with AutoGen Agents:
+        .. code-block:: python
+
+            # Set up the search tool with an agent
+            from autogen import ConversableAgent
+            from autogen_core import ComponentModel
+            from autogen_ext.tools.azure import AzureAISearchTool
+
+            # Create the search tool
+            search_tool = AzureAISearchTool.load_component(
+                ComponentModel(
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
+                    config={
+                        "name": "DocumentSearch",
+                        "endpoint": "https://your-search-service.search.windows.net",
+                        "index_name": "your-index",
+                        "credential": {"api_key": "your-api-key"},
+                        "query_type": "semantic",
+                        "openai_client": openai_client,
+                        "embedding_model": "text-embedding-ada-002",
+                    },
+                )
+            )
+
+            # Create an assistant with the search tool
+            assistant = ConversableAgent(
+                name="research_assistant",
+                llm_config={"config_list": [...], "tools": [search_tool.schema]},
+                system_message="You are a research assistant with access to a document search tool.",
+            )
+
+            # The agent can now use search in conversations
+            user = ConversableAgent(name="user")
+            user.initiate_chat(assistant, message="Find information about quantum computing applications")
+
+    Result Structure:
+        The search results are returned as a `SearchResults` object containing:
+
+        .. code-block:: python
+
+            class SearchResults(BaseModel):
+                results: List[SearchResult]
+
+
+            class SearchResult(BaseModel):
+                score: float  # Relevance score (0.0-1.0)
+                content: Dict[str, Any]  # Document content fields
+                metadata: Dict[str, Any]  # System metadata
+
+    Troubleshooting:
+        - If you receive authentication errors, verify your credential is correct
+        - For "index not found" errors, check that the index name exists in your Azure service
+        - For performance issues, consider using vector search with pre-computed embeddings
+        - Rate limits may apply based on your Azure service tier
+
+    External Resources:
+        - `Azure AI Search Documentation <https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search>`_
+        - `Create an Azure AI Search Index <https://learn.microsoft.com/en-us/azure/search/search-get-started-portal>`_
+        - `Azure AI Search Vector Search <https://learn.microsoft.com/en-us/azure/search/vector-search-overview>`_
 
     Args:
+        embedding_model (str): The name of the embedding model to use
         name (str): Name for the tool instance.
         endpoint (str): The full URL of your Azure AI Search service.
         index_name (str): Name of the search index to query.
@@ -182,6 +361,8 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         select_fields (Optional[List[str]]): Fields to return in search results.
         vector_fields (Optional[List[str]]): Fields to use for vector search.
         top (Optional[int]): Maximum number of results to return.
+        max_retries (int): Maximum number of retries for OpenAI API calls (default: 3)
+        retry_delay (float): Base delay in seconds between retries (default: 1.0)
     """
 
     def __init__(
