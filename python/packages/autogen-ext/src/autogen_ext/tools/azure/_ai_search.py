@@ -155,14 +155,19 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
     .. note::
         Requires Azure AI Search service and appropriate credentials.
         Compatible with Azure AI Search API versions 2023-07-01-Preview and above.
+        
+    .. important::
+        For vector search functionality, your Azure AI Search index must contain vector fields
+        populated with OpenAI-compatible embeddings. The embeddings in your index should be
+        generated using the same or compatible embedding models as specified in this tool.
 
     Quick Start:
         .. code-block:: python
-
+            
             # Basic setup with API key
             from autogen_core import ComponentModel
             from autogen_ext.tools.azure import AzureAISearchTool
-
+            
             # Create search tool with minimal configuration
             search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
@@ -172,11 +177,11 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         "endpoint": "https://your-search-service.search.windows.net",
                         "index_name": "your-index",
                         "credential": {"api_key": "your-api-key"},
-                        "query_type": "simple",
+                        "query_type": "simple"
                     },
                 )
             )
-
+            
             # Run a search
             results = await search_tool.run_json(args={"query": "your search query"})
             print(f"Found {len(results.results)} results")
