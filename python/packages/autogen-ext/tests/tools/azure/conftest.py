@@ -49,13 +49,26 @@ for module_name in [
     "azure.core",
     "azure.core.credentials",
     "azure.core.exceptions",
+    "azure.identity",
+    "azure.cosmos",
+    "azure.cosmos.cosmos_client",
+    "azure.cosmos.partition_key",
+    "azure.cosmos.container",
+    "azure.cosmos.database",
+    "azure.cosmos.exceptions",
     "azure.search.documents",
     "azure.search.documents.aio",
     "azure.search.documents.models",
     "azure.search.documents.indexes",
     "azure.search.documents.indexes.models",
-    "azure.cosmos",
+    "azure.search.documents.indexes.aio",
+    "azure.mgmt.search",
     "azure.storage.blob",
+    "azure.storage.queue",
+    "azure.storage.common",
+    "azure.ai.ml",
+    "azure.ai.formrecognizer",
+    "azure.openai",
 ]:
     if module_name not in sys.modules:
         sys.modules[module_name] = MagicMock()
@@ -68,6 +81,24 @@ credentials.TokenCredential = MockTokenCredential  # type: ignore
 exceptions = sys.modules["azure.core.exceptions"]
 exceptions.ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
 exceptions.HttpResponseError = MockHttpResponseError  # type: ignore
+
+cosmos_module = sys.modules["azure.cosmos"]
+cosmos_module.CosmosClient = MagicMock  # type: ignore
+cosmos_module.ContainerProxy = MagicMock  # type: ignore
+cosmos_module.DatabaseProxy = MagicMock  # type: ignore
+
+partition_key_module = sys.modules["azure.cosmos.partition_key"]
+partition_key_module.PartitionKey = MagicMock  # type: ignore
+
+blob_module = sys.modules["azure.storage.blob"]
+blob_module.BlobServiceClient = MagicMock  # type: ignore
+blob_module.ContainerClient = MagicMock  # type: ignore
+blob_module.BlobClient = MagicMock  # type: ignore
+
+if "azure.identity" in sys.modules:
+    identity_module = sys.modules["azure.identity"]
+    identity_module.DefaultAzureCredential = MagicMock  # type: ignore
+    identity_module.ClientSecretCredential = MagicMock  # type: ignore
 
 
 @pytest.fixture
