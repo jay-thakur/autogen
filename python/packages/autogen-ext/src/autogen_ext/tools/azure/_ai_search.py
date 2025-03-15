@@ -673,19 +673,41 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         Returns:
             BaseAzureAISearchTool: An initialized instance of the search tool
         """
+        query_type_str = getattr(config, "query_type", "simple")
+        query_type: Literal["simple", "full", "semantic", "vector"]
+
+        if query_type_str == "simple":
+            query_type = "simple"
+        elif query_type_str == "full":
+            query_type = "full"
+        elif query_type_str == "semantic":
+            query_type = "semantic"
+        elif query_type_str == "vector":
+            query_type = "vector"
+        else:
+            query_type = "simple"
+
+        openai_client_attr = getattr(config, "openai_client", None)
+        if openai_client_attr is None:
+            raise ValueError("openai_client must be provided in config")
+
+        embedding_model_attr = getattr(config, "embedding_model", "")
+        if not embedding_model_attr:
+            raise ValueError("embedding_model must be specified in config")
+
         return cls(
-            name=config.name,
-            description=config.description,
-            endpoint=config.endpoint,
-            index_name=config.index_name,
-            api_version=config.api_version,
-            credential=config.credential,
-            semantic_config_name=config.semantic_config_name,
-            query_type=config.query_type,
-            search_fields=config.search_fields,
-            select_fields=config.select_fields,
-            vector_fields=config.vector_fields,
-            top=config.top,
+            name=getattr(config, "name", ""),
+            endpoint=getattr(config, "endpoint", ""),
+            index_name=getattr(config, "index_name", ""),
+            credential=getattr(config, "credential", {}),
+            description=getattr(config, "description", None),
+            api_version=getattr(config, "api_version", "2023-11-01"),
+            semantic_config_name=getattr(config, "semantic_config_name", None),
+            query_type=query_type,
+            search_fields=getattr(config, "search_fields", None),
+            select_fields=getattr(config, "select_fields", None),
+            vector_fields=getattr(config, "vector_fields", None),
+            top=getattr(config, "top", None),
         )
 
     @overload
@@ -789,12 +811,35 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         self,
         openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
         embedding_model: str,
-        *args: Any,
+        name: str,
+        endpoint: str,
+        index_name: str,
+        credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
+        description: Optional[str] = None,
+        api_version: str = "2023-11-01",
+        semantic_config_name: Optional[str] = None,
+        query_type: Literal["simple", "full", "semantic", "vector"] = "simple",
+        search_fields: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
+        vector_fields: Optional[List[str]] = None,
+        top: Optional[int] = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        **kwargs: Any,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            name=name,
+            endpoint=endpoint,
+            index_name=index_name,
+            credential=credential,
+            description=description,
+            api_version=api_version,
+            semantic_config_name=semantic_config_name,
+            query_type=query_type,
+            search_fields=search_fields,
+            select_fields=select_fields,
+            vector_fields=vector_fields,
+            top=top,
+        )
 
         if not openai_client:
             raise ValueError("openai_client must be provided")
@@ -1035,19 +1080,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         env_prefix: str = "AZURE_SEARCH",
         **kwargs: Any,
     ) -> "OpenAIAzureAISearchTool":
-        """Create a search tool instance from environment variables.
-
-        Args:
-            cls (Type): The class to instantiate
-            openai_client (Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"]): The OpenAI client for embeddings
-            embedding_model (str): The embedding model to use
-            name (str): The name of the tool
-            env_prefix (str): Prefix for environment variables
-            **kwargs (Any): Additional arguments
-
-        Returns:
-            An initialized search tool
-        """
+        """Create a search tool instance from environment variables."""
         import os
 
         endpoint = os.getenv(f"{env_prefix}_ENDPOINT")
@@ -1061,28 +1094,94 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
             )
 
         api_version = os.getenv(f"{env_prefix}_API_VERSION", "2023-11-01")
-        query_type = os.getenv(f"{env_prefix}_QUERY_TYPE", "simple")
+        query_type_str = os.getenv(f"{env_prefix}_QUERY_TYPE", "simple")
 
-        if query_type not in ["simple", "full", "semantic", "vector"]:
-            raise ValueError(f"Invalid query type: {query_type}. Must be one of: simple, full, semantic, vector")
+        valid_query_types = ["simple", "full", "semantic", "vector"]
+        if query_type_str not in valid_query_types:
+            raise ValueError(f"Invalid query type: {query_type_str}. Must be one of: {', '.join(valid_query_types)}")
 
-        config_kwargs = {
-            "endpoint": endpoint,
-            "index_name": index_name,
-            "credential": {"api_key": api_key},
-            "api_version": api_version,
-            "query_type": query_type,
-        }
+        query_type: Literal["simple", "full", "semantic", "vector"]
+        if query_type_str == "simple":
+            query_type = "simple"
+        elif query_type_str == "full":
+            query_type = "full"
+        elif query_type_str == "semantic":
+            query_type = "semantic"
+        else:
+            query_type = "vector"
 
+        credential = {"api_key": api_key}
+
+        vector_fields = None
         vector_fields_str = os.getenv(f"{env_prefix}_VECTOR_FIELDS")
         if vector_fields_str:
-            config_kwargs["vector_fields"] = vector_fields_str
+            vector_fields = vector_fields_str.split(",")
 
-        semantic_config = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
-        if semantic_config:
-            config_kwargs["semantic_config_name"] = semantic_config
+        semantic_config_name = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
 
-        config_kwargs.update(kwargs)
+        additional_params = kwargs.copy()
 
-        search_config = AzureAISearchConfig(**config_kwargs)
-        return cls(openai_client=openai_client, embedding_model=embedding_model, name=name, search_config=search_config)
+        return cls(
+            openai_client=openai_client,
+            embedding_model=embedding_model,
+            name=name,
+            endpoint=endpoint,
+            index_name=index_name,
+            credential=credential,
+            api_version=api_version,
+            query_type=query_type,
+            vector_fields=vector_fields,
+            semantic_config_name=semantic_config_name,
+            **additional_params,
+        )
+
+    @classmethod
+    def _from_config(cls, config: Any) -> "OpenAIAzureAISearchTool":
+        """Create an instance from a configuration object.
+
+        Args:
+            config: The configuration object containing search tool settings
+
+        Returns:
+            An initialized OpenAIAzureAISearchTool instance
+        """
+        query_type_str = getattr(config, "query_type", "simple")
+        query_type: Literal["simple", "full", "semantic", "vector"]
+
+        if query_type_str == "simple":
+            query_type = "simple"
+        elif query_type_str == "full":
+            query_type = "full"
+        elif query_type_str == "semantic":
+            query_type = "semantic"
+        elif query_type_str == "vector":
+            query_type = "vector"
+        else:
+            query_type = "simple"
+
+        openai_client_attr = getattr(config, "openai_client", None)
+        if openai_client_attr is None:
+            raise ValueError("openai_client must be provided in config")
+
+        embedding_model_attr = getattr(config, "embedding_model", "")
+        if not embedding_model_attr:
+            raise ValueError("embedding_model must be specified in config")
+
+        return cls(
+            openai_client=openai_client_attr,
+            embedding_model=embedding_model_attr,
+            name=getattr(config, "name", ""),
+            endpoint=getattr(config, "endpoint", ""),
+            index_name=getattr(config, "index_name", ""),
+            credential=getattr(config, "credential", {}),
+            description=getattr(config, "description", None),
+            api_version=getattr(config, "api_version", "2023-11-01"),
+            semantic_config_name=getattr(config, "semantic_config_name", None),
+            query_type=query_type,
+            search_fields=getattr(config, "search_fields", None),
+            select_fields=getattr(config, "select_fields", None),
+            vector_fields=getattr(config, "vector_fields", None),
+            top=getattr(config, "top", None),
+            max_retries=getattr(config, "max_retries", 3),
+            retry_delay=getattr(config, "retry_delay", 1.0),
+        )
