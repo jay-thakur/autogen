@@ -5,35 +5,29 @@ including simple text search, full text search, semantic search, and vector sear
 
 Overview:
     The Azure AI Search tools allow agents to search and retrieve information from
-    Azure AI Search indexes. The main tool class is OpenAIAzureAISearchTool, which
-    combines Azure AI Search with OpenAI embeddings for advanced search capabilities.
+    Azure AI Search indexes. The main tool class is AzureAISearchTool, which
+    leverages Azure AI Search's built-in vectorization capabilities for advanced search.
 
 Core Search Types:
     - Simple text search: Basic keyword matching
     - Full text search: Enhanced text analysis with Azure's full-text capabilities
     - Semantic search: Understanding the meaning of queries using Azure's semantic ranking
-    - Vector search: Using embeddings for similarity matching
+    - Vector search: Using Azure's built-in vectorization for similarity matching
 
 Composite Search Types:
     - Hybrid search: A convenience method that combines semantic and vector search capabilities
 
 Quick Start:
     ```python
-    # Create a search tool using OpenAI for embeddings
-    from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-    import openai
-
-    # Initialize OpenAI client
-    openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+    from autogen_ext.tools.azure import AzureAISearchTool
+    from azure.core.credentials import AzureKeyCredential
 
     # Create a basic search tool
-    search_tool = OpenAIAzureAISearchTool.create_simple_search(
-        openai_client=openai_client,
-        embedding_model="text-embedding-3-small",
+    search_tool = AzureAISearchTool.create_simple_search(
         name="simple_search",
         endpoint="https://your-search-service.search.windows.net",
         index_name="your-index",
-        credential={"api_key": "your-api-key"},
+        credential=AzureKeyCredential("your-api-key"),
     )
 
     # Run a search
@@ -47,86 +41,29 @@ Quick Start:
         print("-" * 50)
     ```
 
-Extending with Custom Embeddings:
-    To implement a custom embedding provider, subclass BaseAzureAISearchTool and
-    implement the _get_embedding method:
-
+Advanced Usage Examples:
     ```python
-    from autogen_ext.tools.azure import BaseAzureAISearchTool
-    from typing import List
-
-
-    class CustomAzureAISearchTool(BaseAzureAISearchTool):
-        '''Custom search tool with a specialized embedding provider.'''
-
-        def __init__(self, embedding_client, **kwargs):
-            super().__init__(**kwargs)
-            self.embedding_client = embedding_client
-
-        async def _get_embedding(self, query: str) -> List[float]:
-            '''Generate embedding using a custom embedding provider.
-
-            Args:
-                query: The text to generate an embedding for
-
-            Returns:
-                A list of floating point values representing the embedding vector
-            '''
-            result = await self.embedding_client.generate_embedding(query)
-            return result.embedding_vector
-
-
-    # Example with a third-party embedding provider
-    class SentenceTransformerEmbedder:
-        def __init__(self, model_name):
-            from sentence_transformers import SentenceTransformer
-
-            self.model = SentenceTransformer(model_name)
-
-        async def generate_embedding(self, text):
-            from types import SimpleNamespace
-            import asyncio
-
-            vector = await asyncio.to_thread(self.model.encode, text)
-            return SimpleNamespace(embedding_vector=vector.tolist())
-
-
-    # Usage
-    embedder = SentenceTransformerEmbedder("all-MiniLM-L6-v2")
-    custom_tool = CustomAzureAISearchTool(
-        embedding_client=embedder,
-        name="custom_search",
+    # Example 1: Filter results by category (filter specified at creation time)
+    filtered_search = AzureAISearchTool.create_simple_search(
+        name="science_articles",
         endpoint="https://your-search-service.search.windows.net",
         index_name="your-index",
-        credential={"api_key": "your-api-key"},
-        query_type="vector",
-        vector_fields=["embedding_field"],
-    )
-    ```
-
-Advanced Usage:
-    ```python
-    # Search with filters
-    filtered_results = await search_tool.run(
-        args={"query": "climate change", "filter": "year gt 2020 and category eq 'science'"}
+        credential=AzureKeyCredential("your-api-key"),
+        filter="category eq 'science'",  # Pre-configured filter
+        top=5,  # Limit to 5 results
     )
 
-    # Vector search with pre-computed embeddings
-    vector = [0.1, 0.2, 0.3, 0.4, 0.5]  # Pre-computed embedding vector
-    vector_results = await search_tool.run(args={"query": "", "vector": vector})
+    science_results = await filtered_search.run(args={"query": "climate change"})
 
-    # Combining semantic and vector search capabilities
-    semantic_vector_tool = OpenAIAzureAISearchTool.create_semantic_search(
-        openai_client=openai_client,
-        embedding_model="text-embedding-3-small",
-        name="advanced_search",
+    # Example 2: Enable caching for performance
+    cached_search = AzureAISearchTool.create_simple_search(
+        name="cached_search",
         endpoint="https://your-search-service.search.windows.net",
         index_name="your-index",
-        credential={"api_key": "your-api-key"},
-        vector_fields=["embedding_field"],
-        semantic_config_name="default",
+        credential=AzureKeyCredential("your-api-key"),
+        enable_caching=True,
+        cache_ttl_seconds=300,  # Cache results for 5 minutes
     )
-    results = await semantic_vector_tool.run(args={"query": "renewable energy solutions"})
     ```
 
 Requirements:
@@ -140,7 +77,7 @@ Troubleshooting:
     - "Index not found": Check that your index_name exists in your Azure service
     - Vector search errors: Ensure your index has properly configured vector fields
       matching the dimension of your embedding model
-    - Performance issues: Consider using vector search with pre-computed embeddings
+    - Performance issues: Consider enabling caching for repeated queries
     - Rate limits: Adjust retry settings if hitting rate limits based on your Azure service tier
 
 Choosing Search Types:
@@ -153,14 +90,32 @@ For more information about Azure AI Search, see:
 https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
 """
 
+from typing import Any, List, Type, TypeVar, Union, cast
+
+try:
+    from azure.search.documents.models import VectorizableTextQuery  # type: ignore
+except ImportError:
+    # Fallback implementation with a different name to avoid type conflicts
+    class _VectorizableTextQueryFallback:
+        """Fallback implementation when Azure SDK is not installed."""
+
+        def __init__(self, text: str, k: int, fields: Union[str, List[str]]) -> None:
+            self.text = text
+            self.k = k
+            self.fields = fields if isinstance(fields, str) else ",".join(fields)
+
+    # Assign our fallback to the name used in the code
+    VectorizableTextQuery = _VectorizableTextQueryFallback  # type: ignore
+
+
 import logging
 import time
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast, overload
+from typing import TYPE_CHECKING, Dict, Literal, Optional, overload
 
 from autogen_core import CancellationToken, ComponentModel
-from autogen_core.tools import BaseTool
+from autogen_core.tools import BaseTool, ToolSchema
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.search.documents.aio import SearchClient
@@ -184,7 +139,7 @@ HAS_RETRY_POLICY = _has_retry_policy
 
 
 if TYPE_CHECKING:
-    import openai
+    pass
 
 
 class _FallbackAzureAISearchConfig:
@@ -308,24 +263,19 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         .. code-block:: python
 
             from autogen_core import ComponentModel
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-            import openai
-
-            # Initialize OpenAI client
-            openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+            from autogen_ext.tools.azure import AzureAISearchTool
+            from azure.core.credentials import AzureKeyCredential
 
             # Create search tool with minimal configuration
-            search_tool = OpenAIAzureAISearchTool.load_component(
+            search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
-                    provider="autogen_ext.tools.azure.OpenAIAzureAISearchTool",
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
                     config={
                         "name": "AzureSearch",
                         "endpoint": "https://your-search-service.search.windows.net",
                         "index_name": "your-index",
                         "credential": {"api_key": "your-api-key"},
                         "query_type": "simple",
-                        "openai_client": openai_client,
-                        "embedding_model": "text-embedding-ada-002",
                     },
                 )
             )
@@ -339,16 +289,13 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
             # Simple text search example
             from autogen_core import ComponentModel
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-            import openai
-
-            # Initialize OpenAI client
-            openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+            from autogen_ext.tools.azure import AzureAISearchTool
+            from azure.core.credentials import AzureKeyCredential
 
             # Create a tool instance with API key
-            search_tool = OpenAIAzureAISearchTool.load_component(
+            search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
-                    provider="autogen_ext.tools.azure.OpenAIAzureAISearchTool",
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
                     config={
                         "name": "AzureSearch",
                         "description": "Search documents in Azure AI Search",
@@ -385,9 +332,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             openai_client = AsyncOpenAI(api_key="your-openai-api-key")
 
             # Create semantic search tool
-            semantic_search_tool = OpenAIAzureAISearchTool.load_component(
+            semantic_search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
-                    provider="autogen_ext.tools.azure.OpenAIAzureAISearchTool",
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
                     config={
                         "name": "SemanticSearch",
                         "description": "Semantic search with Azure AI Search",
@@ -399,8 +346,6 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         "semantic_config_name": "your-semantic-config",
                         "search_fields": ["content", "title"],
                         "select_fields": ["id", "content", "title", "source"],
-                        "openai_client": openai_client,
-                        "embedding_model": "text-embedding-ada-002",
                         "top": 5,
                     },
                 )
@@ -417,9 +362,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
             # Vector search example
             # Create vector search tool
-            vector_search_tool = OpenAIAzureAISearchTool.load_component(
+            vector_search_tool = AzureAISearchTool.load_component(
                 ComponentModel(
-                    provider="autogen_ext.tools.azure.OpenAIAzureAISearchTool",
+                    provider="autogen_ext.tools.azure.AzureAISearchTool",
                     config={
                         "name": "VectorSearch",
                         "description": "Vector search with Azure AI Search",
@@ -430,8 +375,6 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         "query_type": "vector",
                         "vector_fields": ["embedding"],
                         "select_fields": ["id", "content", "title", "source"],
-                        "openai_client": openai_client,
-                        "embedding_model": "text-embedding-ada-002",
                         "top": 5,
                     },
                 )
@@ -449,16 +392,10 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
             # Using with the latest AutoGen Agents API
             from autogen import AssistantAgent, UserProxyAgent, config_list_from_json
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-            import openai
-
-            # Initialize OpenAI client
-            openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+            from autogen_ext.tools.azure import AzureAISearchTool
 
             # Create the search tool
-            search_tool = OpenAIAzureAISearchTool.create_semantic_search(
-                openai_client=openai_client,
-                embedding_model="text-embedding-3-small",
+            search_tool = AzureAISearchTool.create_semantic_search(
                 name="DocumentSearch",
                 endpoint="https://your-search-service.search.windows.net",
                 index_name="your-index",
@@ -521,6 +458,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         select_fields (Optional[List[str]]): Fields to return in search results.
         vector_fields (Optional[List[str]]): Fields to use for vector search.
         top (Optional[int]): Maximum number of results to return.
+        filter (Optional[str]): OData filter expression to refine search results
+        enable_caching (bool): Whether to cache search results
+        cache_ttl_seconds (int): How long to cache results in seconds
     """
 
     def __init__(
@@ -537,8 +477,29 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         select_fields: Optional[List[str]] = None,
         vector_fields: Optional[List[str]] = None,
         top: Optional[int] = None,
+        filter: Optional[str] = None,
+        enable_caching: bool = False,
+        cache_ttl_seconds: int = 300,
     ):
-        """Initialize the Azure AI Search tool."""
+        """Initialize the Azure AI Search tool.
+
+        Args:
+            name: The name of this tool instance
+            endpoint: The full URL of your Azure AI Search service
+            index_name: Name of the search index to query
+            credential: Azure credential for authentication (API key or token)
+            description: Optional description explaining the tool's purpose
+            api_version: Azure AI Search API version to use
+            semantic_config_name: Name of the semantic configuration (for semantic search)
+            query_type: Type of search to perform ("simple", "full", "semantic", "vector")
+            search_fields: Fields to search within documents
+            select_fields: Fields to return in search results
+            vector_fields: Fields to use for vector search
+            top: Maximum number of results to return
+            filter: OData filter expression to refine search results
+            enable_caching: Whether to cache search results
+            cache_ttl_seconds: How long to cache results in seconds
+        """
         if description is None:
             description = (
                 f"Search for information in the {index_name} index using Azure AI Search. "
@@ -570,6 +531,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             select_fields=select_fields,
             vector_fields=vector_fields,
             top=top,
+            filter=filter,
+            enable_caching=enable_caching,
+            cache_ttl_seconds=cache_ttl_seconds,
         )
 
         self._endpoint = endpoint
@@ -650,7 +614,6 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             if self.search_config.filter:
                 search_options["filter"] = self.search_config.filter
 
-            # Use the top parameter from search_config instead of from query
             if self.search_config.top is not None:
                 search_options["top"] = self.search_config.top
 
@@ -662,16 +625,11 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             if self.search_config.query_type == "vector" or (
                 self.search_config.vector_fields and len(self.search_config.vector_fields) > 0
             ):
-                vector = await self._get_embedding(args.query)
-
                 if self.search_config.vector_fields:
                     vector_fields_list = self.search_config.vector_fields
-                    search_options["vectors"] = [
-                        {
-                            "value": vector,
-                            "fields": ",".join(vector_fields_list),
-                            "k": int(self.search_config.top or 5),
-                        }
+                    search_options["vector_queries"] = [
+                        VectorizableTextQuery(text=args.query, k=int(self.search_config.top or 5), fields=field)
+                        for field in vector_fields_list
                     ]
 
             if cancellation_token.is_cancelled():
@@ -849,6 +807,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             select_fields=getattr(config, "select_fields", None),
             vector_fields=getattr(config, "vector_fields", None),
             top=getattr(config, "top", None),
+            filter=getattr(config, "filter", None),
+            enable_caching=getattr(config, "enable_caching", False),
+            cache_ttl_seconds=getattr(config, "cache_ttl_seconds", 300),
         )
 
     @overload
@@ -901,6 +862,19 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             return tool
         return cast(ExpectedType, tool)
 
+    @property
+    def schema(self) -> ToolSchema:
+        """Return the schema for the tool."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query text"}},
+                "required": ["query"],
+            },
+        }
+
     def return_value_as_string(self, value: SearchResults) -> str:
         """Convert the search results to a string representation.
 
@@ -927,11 +901,11 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 _allow_private_constructor = ContextVar("_allow_private_constructor", default=False)
 
 
-class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
-    """A tool for performing searches using Azure AI Search with OpenAI embeddings.
+class AzureAISearchTool(BaseAzureAISearchTool):
+    """A tool for performing searches using Azure AI Search with built-in vectorization.
 
-    This tool extends the base Azure AI Search tool with OpenAI embedding capabilities
-    for generating vector embeddings at query time.
+    This tool extends the base Azure AI Search tool with Azure's built-in vectorizer
+    capabilities for generating vector embeddings at query time.
 
     Note:
         Do not initialize this class directly. Use factory methods like
@@ -943,18 +917,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         .. code-block:: python
 
             import asyncio
-            import openai
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
+            from autogen_ext.tools.azure import AzureAISearchTool
 
 
             async def simple_search_example():
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
-
                 # Create simple search tool
-                search_tool = OpenAIAzureAISearchTool.create_simple_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                search_tool = AzureAISearchTool.create_simple_search(
                     name="docs_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index-name",
@@ -982,18 +950,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         .. code-block:: python
 
             import asyncio
-            import openai
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
+            from autogen_ext.tools.azure import AzureAISearchTool
 
 
             async def semantic_search_example():
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
-
                 # Create semantic search tool with advanced configuration at creation time
-                search_tool = OpenAIAzureAISearchTool.create_semantic_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                search_tool = AzureAISearchTool.create_semantic_search(
                     name="semantic_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index-name",
@@ -1023,18 +985,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         .. code-block:: python
 
             import asyncio
-            import openai
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
+            from autogen_ext.tools.azure import AzureAISearchTool
 
 
             async def vector_search_example():
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
-
                 # Create vector search tool with complex configuration at creation time
-                search_tool = OpenAIAzureAISearchTool.create_vector_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                search_tool = AzureAISearchTool.create_vector_search(
                     name="vector_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index-name",
@@ -1056,26 +1012,20 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
 
 
             if __name__ == "__main__":
-                asyncio.run(vector_search_example())
+                asyncio.run(vectorsearch_example())
 
         Integration with AutoGen Agents:
 
         .. code-block:: python
 
             import asyncio
-            import openai
             from autogen import AssistantAgent, UserProxyAgent, config_list_from_json
-            from autogen_ext.tools.azure import OpenAIAzureAISearchTool
+            from autogen_ext.tools.azure import AzureAISearchTool
 
 
             async def main():
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
-
                 # Create search tool
-                search_tool = OpenAIAzureAISearchTool.create_semantic_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                search_tool = AzureAISearchTool.create_semantic_search(
                     name="document_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index-name",
@@ -1104,8 +1054,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 asyncio.run(main())
 
     Args:
-        openai_client (Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"]): OpenAI client for generating embeddings.
-        embedding_model (str): The name of the embedding model to use.
         name (str): Name for the tool instance.
         endpoint (str): The full URL of your Azure AI Search service.
         index_name (str): Name of the search index to query.
@@ -1118,14 +1066,13 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         select_fields (Optional[List[str]]): Fields to return in search results.
         vector_fields (Optional[List[str]]): Fields to use for vector search.
         top (Optional[int]): Maximum number of results to return.
-        max_retries (int): Maximum number of retry attempts for embedding generation.
-        retry_delay (float): Delay between retry attempts in seconds.
+        filter (Optional[str]): OData filter expression to refine search results
+        enable_caching (bool): Whether to cache search results
+        cache_ttl_seconds (int): How long to cache results in seconds
     """
 
     def __init__(
         self,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
@@ -1138,8 +1085,9 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         select_fields: Optional[List[str]] = None,
         vector_fields: Optional[List[str]] = None,
         top: Optional[int] = None,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
+        filter: Optional[str] = None,
+        enable_caching: bool = False,
+        cache_ttl_seconds: int = 300,
     ) -> None:
         if not _allow_private_constructor.get():
             raise RuntimeError(
@@ -1160,27 +1108,16 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
             select_fields=select_fields,
             vector_fields=vector_fields,
             top=top,
+            filter=filter,
+            enable_caching=enable_caching,
+            cache_ttl_seconds=cache_ttl_seconds,
         )
-
-        if not openai_client:
-            raise ValueError("openai_client must be provided")
-        if not embedding_model:
-            raise ValueError("embedding_model must be specified")
-        if max_retries < 0:
-            raise ValueError("max_retries must be non-negative")
-        if retry_delay <= 0:
-            raise ValueError("retry_delay must be positive")
-
-        self.openai_client = openai_client
-        self.embedding_model = embedding_model
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
 
     @classmethod
     @overload
     def load_component(
         cls, model: Union[ComponentModel, Dict[str, Any]], expected: None = None
-    ) -> "OpenAIAzureAISearchTool": ...
+    ) -> "AzureAISearchTool": ...
 
     @classmethod
     @overload
@@ -1191,7 +1128,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def load_component(
         cls, model: Union[ComponentModel, Dict[str, Any]], expected: Optional[Type[ExpectedType]] = None
-    ) -> Union["OpenAIAzureAISearchTool", ExpectedType]:
+    ) -> Union["AzureAISearchTool", ExpectedType]:
         """Load a component from a component model.
 
         Args:
@@ -1199,7 +1136,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
             expected: Optional expected return type
 
         Returns:
-            An initialized OpenAIAzureAISearchTool instance
+            An initialized AzureAISearchTool instance
         """
         token = _allow_private_constructor.set(True)
         try:
@@ -1220,17 +1157,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
             else:
                 query_type = "vector"
 
-            openai_client = config.get("openai_client")
-            if openai_client is None:
-                raise ValueError("openai_client must be provided in config")
-
-            embedding_model = config.get("embedding_model", "")
-            if not embedding_model:
-                raise ValueError("embedding_model must be specified in config")
-
             instance = cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=config.get("name", ""),
                 endpoint=config.get("endpoint", ""),
                 index_name=config.get("index_name", ""),
@@ -1242,8 +1169,9 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 select_fields=config.get("select_fields"),
                 vector_fields=config.get("vector_fields"),
                 top=config.get("top"),
-                max_retries=config.get("max_retries", 3),
-                retry_delay=config.get("retry_delay", 1.0),
+                filter=config.get("filter"),
+                enable_caching=config.get("enable_caching", False),
+                cache_ttl_seconds=config.get("cache_ttl_seconds", 300),
             )
 
             if expected is not None:
@@ -1255,22 +1183,18 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def create_simple_search(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Factory method to create a simple search tool.
 
         This is the easiest way to get started with Azure AI Search in AutoGen.
         Simple search uses basic keyword matching for straightforward queries.
 
         Args:
-            openai_client (Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]): OpenAI client for generating embeddings
-            embedding_model (str): The name of the embedding model to use
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
@@ -1283,16 +1207,10 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         Example:
             .. code-block:: python
 
-                import openai
-                from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-
-                # Initialize the OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+                from autogen_ext.tools.azure import AzureAISearchTool
 
                 # Create a simple search tool
-                search_tool = OpenAIAzureAISearchTool.create_simple_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-ada-002",
+                search_tool = AzureAISearchTool.create_simple_search(
                     name="simple_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
@@ -1303,7 +1221,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 result = await search_tool.run(args={"query": "machine learning"})
                 print(f"Found {len(result.results)} results")
         """
-        # Validate parameters
         if not endpoint or not endpoint.startswith(("http://", "https://")):
             raise ValueError("endpoint must be a valid URL starting with http:// or https://")
 
@@ -1313,20 +1230,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         if not name:
             raise ValueError("name cannot be empty")
 
-        if not embedding_model:
-            raise ValueError("embedding_model cannot be empty")
-
-        if not openai_client:
-            raise ValueError("openai_client cannot be None")
-
         if not credential:
             raise ValueError("credential cannot be None")
 
         token = _allow_private_constructor.set(True)
         try:
             return cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
@@ -1340,8 +1249,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def create_full_search(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
@@ -1349,7 +1256,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Factory method to create a full text search tool.
 
         Full text search provides enhanced text analysis with Azure's advanced text
@@ -1357,8 +1264,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         This provides more sophisticated keyword matching than simple search.
 
         Args:
-            openai_client (Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]): OpenAI client for generating embeddings
-            embedding_model (str): The name of the embedding model to use
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
@@ -1373,17 +1278,11 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         Example:
             .. code-block:: python
 
-                import openai
                 from azure.core.credentials import AzureKeyCredential
-                from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-
-                # Initialize the OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+                from autogen_ext.tools.azure import AzureAISearchTool
 
                 # Create a full text search tool
-                full_search = OpenAIAzureAISearchTool.create_full_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                full_search = AzureAISearchTool.create_full_search(
                     name="full_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
@@ -1399,7 +1298,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 for item in results.results:
                     print(f"Score: {item.score}, Title: {item.content.get('title', 'No title')}")
         """
-        # Validate parameters
         if not endpoint or not endpoint.startswith(("http://", "https://")):
             raise ValueError("endpoint must be a valid URL starting with http:// or https://")
 
@@ -1409,20 +1307,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         if not name:
             raise ValueError("name cannot be empty")
 
-        if not embedding_model:
-            raise ValueError("embedding_model cannot be empty")
-
-        if not openai_client:
-            raise ValueError("openai_client cannot be None")
-
         if not credential:
             raise ValueError("credential cannot be None")
 
         token = _allow_private_constructor.set(True)
         try:
             return cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
@@ -1438,15 +1328,13 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def create_semantic_search(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         semantic_config_name: str,
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Factory method to create a semantic search tool.
 
         Semantic search uses natural language understanding to return results based on the
@@ -1454,8 +1342,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         for natural language queries.
 
         Args:
-            openai_client (Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]): OpenAI client for generating embeddings
-            embedding_model (str): The name of the embedding model to use
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
@@ -1469,17 +1355,11 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         Example:
             .. code-block:: python
 
-                import openai
                 from azure.core.credentials import AzureKeyCredential
-                from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-
-                # Initialize the OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+                from autogen_ext.tools.azure import AzureAISearchTool
 
                 # Create a semantic search tool
-                semantic_search_tool = OpenAIAzureAISearchTool.create_semantic_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-ada-002",
+                semantic_search_tool = AzureAISearchTool.create_semantic_search(
                     name="semantic_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
@@ -1494,7 +1374,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 except Exception as e:
                     print(f"Search failed: {e}")
         """
-        # Validate parameters
         if not endpoint or not endpoint.startswith(("http://", "https://")):
             raise ValueError("endpoint must be a valid URL starting with http:// or https://")
 
@@ -1503,12 +1382,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
 
         if not name:
             raise ValueError("name cannot be empty")
-
-        if not embedding_model:
-            raise ValueError("embedding_model cannot be empty")
-
-        if not openai_client:
-            raise ValueError("openai_client cannot be None")
 
         if not credential:
             raise ValueError("credential cannot be None")
@@ -1521,8 +1394,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         token = _allow_private_constructor.set(True)
         try:
             return cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
@@ -1537,15 +1408,13 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def create_vector_search(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         vector_fields: List[str],
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Factory method to create a vector search tool.
 
         Vector search uses embedding vectors to find semantically similar content, enabling
@@ -1553,8 +1422,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         provides powerful similarity-based search capabilities.
 
         Args:
-            openai_client (Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]): OpenAI client for generating embeddings
-            embedding_model (str): The name of the embedding model to use
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
@@ -1568,17 +1435,11 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         Example:
             .. code-block:: python
 
-                import openai
                 from azure.core.credentials import AzureKeyCredential
-                from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+                from autogen_ext.tools.azure import AzureAISearchTool
 
                 # Create a vector search tool
-                vector_search_tool = OpenAIAzureAISearchTool.create_vector_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-ada-002",
+                vector_search_tool = AzureAISearchTool.create_vector_search(
                     name="vector_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
@@ -1586,14 +1447,9 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                     vector_fields=["embedding"],
                 )
 
-                # Perform a vector search with a text query (will be converted to vector)
+                # Perform a vector search with a text query
                 result = await vector_search_tool.run(args={"query": "quantum computing algorithms"})
-
-                # Or use a pre-computed vector directly
-                vector = [0.1, 0.2, 0.3, 0.4]  # Example vector (would be much longer in practice)
-                result = await vector_search_tool.run(args={"vector": vector})
         """
-        # Validate parameters
         if not endpoint or not endpoint.startswith(("http://", "https://")):
             raise ValueError("endpoint must be a valid URL starting with http:// or https://")
 
@@ -1602,12 +1458,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
 
         if not name:
             raise ValueError("name cannot be empty")
-
-        if not embedding_model:
-            raise ValueError("embedding_model cannot be empty")
-
-        if not openai_client:
-            raise ValueError("openai_client cannot be None")
 
         if not credential:
             raise ValueError("credential cannot be None")
@@ -1618,8 +1468,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         token = _allow_private_constructor.set(True)
         try:
             return cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
@@ -1634,8 +1482,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def create_hybrid_search(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         endpoint: str,
         index_name: str,
@@ -1643,7 +1489,7 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         semantic_config_name: str,
         vector_fields: List[str],
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Factory method to create a hybrid search tool.
 
         Hybrid search combines the strengths of semantic ranking and vector similarity search
@@ -1652,8 +1498,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         distinct query type but rather configures semantic search to also leverage vector capabilities.
 
         Args:
-            openai_client: Union[openai.AsyncOpenAI, openai.AsyncAzureOpenAI]: OpenAI client for generating embeddings
-            embedding_model (str): The name of the embedding model to use
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
@@ -1668,17 +1512,11 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
         Example:
             .. code-block:: python
 
-                import openai
                 from azure.core.credentials import AzureKeyCredential
-                from autogen_ext.tools.azure import OpenAIAzureAISearchTool
-
-                # Initialize OpenAI client
-                openai_client = openai.AsyncOpenAI(api_key="your-openai-key")
+                from autogen_ext.tools.azure import AzureAISearchTool
 
                 # Create a hybrid search tool
-                hybrid_search = OpenAIAzureAISearchTool.create_hybrid_search(
-                    openai_client=openai_client,
-                    embedding_model="text-embedding-3-small",
+                hybrid_search = AzureAISearchTool.create_hybrid_search(
                     name="hybrid_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
@@ -1694,15 +1532,12 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
                 for item in results.results:
                     print(f"Score: {item.score}, Title: {item.content.get('title', 'No title')}")
         """
-        # Validate vector_fields (other validations will be done in create_semantic_search)
         if not vector_fields or len(vector_fields) == 0:
             raise ValueError("vector_fields must contain at least one field name for hybrid search")
 
         token = _allow_private_constructor.set(True)
         try:
             return cls.create_semantic_search(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
@@ -1717,12 +1552,10 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
     @classmethod
     def from_env(
         cls,
-        openai_client: Union["openai.AsyncOpenAI", "openai.AsyncAzureOpenAI"],
-        embedding_model: str,
         name: str,
         env_prefix: str = "AZURE_SEARCH",
         **kwargs: Any,
-    ) -> "OpenAIAzureAISearchTool":
+    ) -> "AzureAISearchTool":
         """Create a search tool instance from environment variables."""
         token = _allow_private_constructor.set(True)
         try:
@@ -1769,8 +1602,6 @@ class OpenAIAzureAISearchTool(BaseAzureAISearchTool):
             additional_params = kwargs.copy()
 
             return cls(
-                openai_client=openai_client,
-                embedding_model=embedding_model,
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,

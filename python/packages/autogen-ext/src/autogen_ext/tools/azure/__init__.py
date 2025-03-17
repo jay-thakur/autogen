@@ -1,8 +1,8 @@
 """Azure AI Search tool for AutoGen."""
 
 from ._ai_search import (
+    AzureAISearchTool,
     BaseAzureAISearchTool,
-    OpenAIAzureAISearchTool,
     SearchQuery,
     SearchResult,
     SearchResults,
@@ -10,8 +10,8 @@ from ._ai_search import (
 from ._config import AzureAISearchConfig
 
 __all__ = [
+    "AzureAISearchTool",
     "BaseAzureAISearchTool",
-    "OpenAIAzureAISearchTool",
     "SearchQuery",
     "SearchResult",
     "SearchResults",

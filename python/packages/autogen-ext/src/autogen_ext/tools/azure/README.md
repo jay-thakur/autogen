@@ -9,7 +9,7 @@ Detailed documentation, including usage examples, API reference, and configurati
 Please refer to:
 
 - Module docstring in `_ai_search.py` for overview and quick start guide
-- Class docstrings in `OpenAIAzureAISearchTool` for comprehensive API documentation
+- Class docstrings in `AzureAISearchTool` for comprehensive API documentation
 - Factory methods documentation for specialized search tool creation
 
 ## Installation
@@ -54,9 +54,7 @@ Then create the search tool:
 
 ```python
 # Load configuration from environment variables
-search_tool = OpenAIAzureAISearchTool.from_env(
-    openai_client=openai_client,
-    embedding_model="text-embedding-ada-002",
+search_tool = AzureAISearchTool.from_env(
     name="env_search"
 )
 ```
@@ -79,17 +77,6 @@ It uses exponential backoff with jitter to efficiently recover from transient fa
 4. **Apply least privilege** to your search service API keys
 5. **Regularly rotate** your API keys
 
-### Performance Optimization
-
-For bulk operations, use the batched embedding functionality:
-
-```python
-async def process_multiple_queries(queries):
-    # Process multiple queries in batch for efficiency
-    embeddings = await search_tool._get_embeddings_batch(queries)
-    # Use embeddings for search or other operations
-```
-
 ### Debugging
 
 Enable more verbose logging:
@@ -107,4 +94,4 @@ If you encounter issues:
 1. Verify your Azure AI Search service is running
 2. Check that your index exists and is properly configured
 3. Ensure your API key has appropriate permissions
-4. For vector search, confirm your index has vector fields configured 
+4. For vector search, confirm your index has vector fields configured

@@ -3,7 +3,7 @@
 import importlib.util
 import os
 import sys
-from typing import Any, Dict, List, Optional, Type, TypeAlias, cast
+from typing import Any, Dict, List, Optional, Type, TypeAlias, Union, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,9 +71,6 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         self._semantic_config_name = kwargs.get("semantic_config_name", None)
         self._client: Optional[MagicMock] = None
 
-        self.openai_client = kwargs.get("openai_client", None)
-        self.embedding_model = kwargs.get("embedding_model", "")
-
         self.search_config = MagicMock()
         self.search_config.endpoint = self._endpoint
         self.search_config.index_name = self._index_name
@@ -102,12 +99,7 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             "description": self.description,
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query text"},
-                    "filter": {"type": "string", "description": "Optional filter expression"},
-                    "top": {"type": "integer", "description": "Optional number of results to return"},
-                    "vector": {"type": "array", "description": "Optional vector for vector/hybrid search"},
-                },
+                "properties": {"query": {"type": "string", "description": "Search query text"}},
                 "required": ["query"],
             },
         }
@@ -136,10 +128,6 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
                 "semantic_config_name": self._semantic_config_name,
             },
         )
-
-    async def _get_embedding(self, query: str) -> List[float]:
-        """Return fixed embeddings for testing."""
-        return [0.1, 0.2, 0.3, 0.4, 0.5]
 
     async def _get_client(self) -> MagicMock:
         """Return a mock client for testing."""
@@ -640,3 +628,12 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
             assert "vectors" in kwargs
             assert len(getattr(result, "results", [])) == 2
             assert getattr(result.results[0], "score", 0) == 0.95
+
+
+class MockVectorizableTextQuery:
+    """Mock implementation of VectorizableTextQuery for testing."""
+
+    def __init__(self, text: str, k: int, fields: Union[str, List[str]]):
+        self.text = text
+        self.k = k
+        self.fields = fields if isinstance(fields, str) else ",".join(fields)

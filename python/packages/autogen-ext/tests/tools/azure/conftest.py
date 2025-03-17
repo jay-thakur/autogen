@@ -129,29 +129,6 @@ def test_config() -> ComponentModel:
 
 
 @pytest.fixture
-def semantic_config() -> ComponentModel:
-    """Create a test configuration for semantic search."""
-    return ComponentModel(
-        provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
-        config={
-            "name": "TestAzureSearch",
-            "description": "Test Azure AI Search Tool",
-            "endpoint": "https://test-search-service.search.windows.net",
-            "index_name": "test-index",
-            "api_version": "2023-10-01-Preview",
-            "credential": {"api_key": "test-key"},
-            "query_type": "semantic",
-            "semantic_config_name": "test-semantic-config",
-            "search_fields": ["content", "title"],
-            "select_fields": ["id", "content", "title", "source"],
-            "top": 5,
-            "openai_client": MagicMock(),
-            "embedding_model": "mock-embedding-model",
-        },
-    )
-
-
-@pytest.fixture
 def vector_config() -> ComponentModel:
     """Create a test configuration for vector search."""
     return ComponentModel(
@@ -167,8 +144,6 @@ def vector_config() -> ComponentModel:
             "vector_fields": ["embedding"],
             "select_fields": ["id", "content", "title", "source"],
             "top": 5,
-            "openai_client": MagicMock(),
-            "embedding_model": "mock-embedding-model",
         },
     )
 
@@ -226,3 +201,26 @@ def mock_search_client(mock_search_response: List[Dict[str, Any]]) -> tuple[Magi
     patcher = patch("azure.search.documents.aio.SearchClient", return_value=mock_client)
 
     return mock_client, patcher
+
+
+@pytest.fixture
+def simple_config() -> ComponentModel:
+    """Create a test configuration for simple search."""
+    return ComponentModel(
+        provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
+        config={
+            "name": "TestAzureSearch",
+            "description": "Test Azure AI Search Tool",
+            "endpoint": "https://test-search-service.search.windows.net",
+            "index_name": "test-index",
+            "api_version": "2023-10-01-Preview",
+            "credential": {"api_key": "test-key"},
+            "query_type": "simple",
+            "search_fields": ["content", "title"],
+            "select_fields": ["id", "content", "title", "source"],
+            "top": 5,
+            "filter": None,
+            "enable_caching": False,
+            "cache_ttl_seconds": 300,
+        },
+    )
