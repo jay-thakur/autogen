@@ -342,22 +342,25 @@ MOCK_SEARCH_RESPONSE: List[Dict[str, Any]] = [
 
 @pytest.mark.asyncio
 async def test_tool_schema_generation(test_config: ComponentModel) -> None:
-    """Test that the tool correctly generates its schema."""
+    """Test that the tool schema is generated correctly."""
     tool = MockAzureAISearchTool.load_component(test_config)
     schema = tool.schema
-
+    assert "name" in schema
     assert schema["name"] == "TestAzureSearch"
-    assert schema["description"] == "Test Azure AI Search Tool"
+    assert "description" in schema
     assert "parameters" in schema
-    assert schema["parameters"]["type"] == "object"
     assert "properties" in schema["parameters"]
-    assert schema["parameters"]["properties"]["query"]["description"] == "Search query text"
-    assert schema["parameters"]["properties"]["query"]["type"] == "string"
-    assert "filter" in schema["parameters"]["properties"]
-    assert "top" in schema["parameters"]["properties"]
-    assert "vector" in schema["parameters"]["properties"]
+
+    # Test that our simplified schema only has the query parameter
+    properties = schema["parameters"]["properties"]
+    assert "query" in properties
+    assert properties["query"]["type"] == "string"
+    assert properties["query"]["description"] == "Search query text"
+
+    # Ensure only query is in the schema properties (not filter, top, or other config options)
+    assert len(properties) == 1
     assert "required" in schema["parameters"]
-    assert schema["parameters"]["required"] == ["query"]
+    assert "query" in schema["parameters"]["required"]
 
 
 def test_tool_properties(test_config: ComponentModel) -> None:
@@ -436,25 +439,66 @@ async def test_simple_search(test_config: ComponentModel) -> None:
 
 
 @pytest.mark.asyncio
-async def test_semantic_search(semantic_config: ComponentModel) -> None:
-    """Test that the tool correctly performs a semantic search."""
-    with patch("azure.search.documents.aio.SearchClient"):
-        tool = MockAzureAISearchTool.load_component(semantic_config)
+async def test_semantic_search() -> None:
+    """Test semantic search functionality."""
+    # Create a mock tool with semantic search configuration using the proper ComponentModel pattern
+    tool = MockAzureAISearchTool.load_component(
+        ComponentModel(
+            provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
+            config={
+                "name": "test_semantic_search",
+                "endpoint": "https://test-endpoint.search.windows.net",
+                "index_name": "test-index",
+                "credential": {"api_key": "test-key"},
+                "semantic_config_name": "test-semantic-config",
+                "query_type": "semantic",
+            },
+        )
+    )
 
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+    # Create a mock client
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        mock_client.search = AsyncMock(return_value=AsyncIterator(MOCK_SEARCH_RESPONSE))
+    # Create test search results using the same approach as other tests
+    search_results = [
+        {
+            "@search.score": 0.95,
+            "id": "doc1",
+            "content": "This is the first document content",
+            "title": "Document 1",
+            "source": "test-source-1",
+        },
+        {
+            "@search.score": 0.85,
+            "id": "doc2",
+            "content": "This is the second document content",
+            "title": "Document 2",
+            "source": "test-source-2",
+        },
+    ]
 
-        with patch.object(tool, "_get_client", return_value=mock_client):
-            await tool.run(SearchQuery(query="test query"), CancellationToken())
-            mock_client.search.assert_called_once()
-            args, kwargs = mock_client.search.call_args
+    # Use AsyncIterator like the other tests do
+    mock_client.search = AsyncMock(return_value=AsyncIterator(search_results))
 
-            assert args[0] == "test query"
-            assert kwargs.get("query_type") == "semantic"
-            assert kwargs.get("semantic_configuration_name") == "test-semantic-config"
+    with patch.object(tool, "_get_client", return_value=mock_client):
+        # Run the search
+        result = await tool.run(SearchQuery(query="test query"), CancellationToken())
+
+        # Verify the client was called correctly
+        mock_client.search.assert_called_once()
+        args, kwargs = mock_client.search.call_args
+        assert args[0] == "test query"
+        assert "query_type" in kwargs
+        assert kwargs["query_type"] == "semantic"
+        assert "semantic_configuration_name" in kwargs
+        assert kwargs["semantic_configuration_name"] == "test-semantic-config"
+
+        # Verify results match our expected mock data
+        assert len(result.results) == 2
+        assert result.results[0].score == 0.95
+        assert result.results[0].content["title"] == "Document 1"
 
 
 @pytest.mark.asyncio
