@@ -807,9 +807,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
+                # type: ignore
 
-                from typing import List
-                from autogen import Agent, UserProxyAgent
+                # Example of using keyword search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
 
@@ -819,19 +819,13 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    search_fields=["title", "content"],  # type: List[str]
-                    select_fields=["id", "title", "content", "category"],  # type: List[str]
+                    search_fields=["title", "content"],
+                    select_fields=["id", "title", "content", "category"],
                     top=10,
                 )
-
-                # Create an assistant with the search tool
-                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[keyword_search])
-
-                # Create a user proxy agent
-                user = UserProxyAgent("user")
-
-                # Start a conversation
-                user.initiate_chat(assistant, message="Find information about machine learning algorithms")
+                
+                # The search tool can be used with an Agent
+                # assistant = Agent("assistant", tools=[keyword_search])
         """
         cls._validate_common_params(name, endpoint, index_name, credential)
 
@@ -890,9 +884,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
+                # type: ignore
 
-                from typing import List
-                from autogen import Agent, UserProxyAgent
+                # Example of using full-text search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
 
@@ -902,19 +896,13 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    search_fields=["title", "content"],  # type: List[str]
-                    select_fields=["title", "content", "category", "url"],  # type: List[str]
+                    search_fields=["title", "content"],
+                    select_fields=["title", "content", "category", "url"],
                     top=10,
                 )
-
-                # Create an assistant with the search tool
-                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[full_text_search])
-
-                # Create a user proxy agent
-                user = UserProxyAgent("user")
-
-                # Start a conversation
-                user.initiate_chat(assistant, message="Find information about natural language processing techniques")
+                
+                # The search tool can be used with an Agent
+                # assistant = Agent("assistant", tools=[full_text_search])
         """
         cls._validate_common_params(name, endpoint, index_name, credential)
 
@@ -978,9 +966,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
+                # type: ignore
 
-                from typing import List
-                from autogen import Agent, UserProxyAgent
+                # Example of using vector search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
 
@@ -990,19 +978,13 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    vector_fields=["embedding"],  # type: List[str]
-                    select_fields=["title", "content", "url"],  # type: List[str]
+                    vector_fields=["embedding"],
+                    select_fields=["title", "content", "url"],
                     top=5,
                 )
-
-                # Create an assistant with the vector search tool
-                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[vector_search])
-
-                # Create a user proxy agent
-                user_proxy = UserProxyAgent("user")
-
-                # Start a conversation
-                user_proxy.initiate_chat(assistant, message="Find information similar to quantum computing algorithms")
+                
+                # The search tool can be used with an Agent
+                # assistant = Agent("assistant", tools=[vector_search])
 
         """
         cls._validate_common_params(name, endpoint, index_name, credential)
@@ -1065,9 +1047,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
+                # type: ignore
 
-                from typing import List
-                from autogen import Agent, UserProxyAgent
+                # Example of using hybrid search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
 
@@ -1077,20 +1059,14 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    vector_fields=["embedding_field"],  # type: List[str]
-                    search_fields=["title", "content"],  # type: List[str]
-                    select_fields=["title", "content", "url", "date"],  # type: List[str]
+                    vector_fields=["embedding_field"],
+                    search_fields=["title", "content"],
+                    select_fields=["title", "content", "url", "date"],
                     top=10,
                 )
-
-                # Create an agent with the search tool
-                assistant = Agent("researcher", llm_config={"model": "gpt-4", "temperature": 0}, tools=[hybrid_search])
-
-                # Create a user proxy agent
-                user = UserProxyAgent("user")
-
-                # Start a conversation using the hybrid search
-                user.initiate_chat(assistant, message="Find the latest research on advanced machine learning techniques")
+                
+                # The search tool can be used with an Agent
+                # assistant = Agent("researcher", tools=[hybrid_search])
         """
         cls._validate_common_params(name, endpoint, index_name, credential)
 
