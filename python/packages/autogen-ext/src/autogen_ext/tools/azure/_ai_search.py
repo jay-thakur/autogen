@@ -807,8 +807,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
-                # type: ignore
 
+                # type: ignore
                 # Example of using keyword search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -823,7 +823,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     select_fields=["id", "title", "content", "category"],
                     top=10,
                 )
-                
+
                 # The search tool can be used with an Agent
                 # assistant = Agent("assistant", tools=[keyword_search])
         """
@@ -884,8 +884,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
-                # type: ignore
 
+                # type: ignore
                 # Example of using full-text search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -900,7 +900,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     select_fields=["title", "content", "category", "url"],
                     top=10,
                 )
-                
+
                 # The search tool can be used with an Agent
                 # assistant = Agent("assistant", tools=[full_text_search])
         """
@@ -966,8 +966,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
-                # type: ignore
 
+                # type: ignore
                 # Example of using vector search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -982,7 +982,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     select_fields=["title", "content", "url"],
                     top=5,
                 )
-                
+
                 # The search tool can be used with an Agent
                 # assistant = Agent("assistant", tools=[vector_search])
 
@@ -1047,8 +1047,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         Example Usage:
             .. code-block:: python
-                # type: ignore
 
+                # type: ignore
                 # Example of using hybrid search with Azure AI Search
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -1064,7 +1064,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     select_fields=["title", "content", "url", "date"],
                     top=10,
                 )
-                
+
                 # The search tool can be used with an Agent
                 # assistant = Agent("researcher", tools=[hybrid_search])
         """
