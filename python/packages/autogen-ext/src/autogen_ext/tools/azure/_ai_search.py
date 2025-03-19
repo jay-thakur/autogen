@@ -808,6 +808,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         Example Usage:
             .. code-block:: python
 
+                from typing import List
                 from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -818,8 +819,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    search_fields=["title", "content"],
-                    select_fields=["id", "title", "content", "category"],
+                    search_fields=["title", "content"],  # type: List[str]
+                    select_fields=["id", "title", "content", "category"],  # type: List[str]
                     top=10,
                 )
 
@@ -890,6 +891,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         Example Usage:
             .. code-block:: python
 
+                from typing import List
                 from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -900,8 +902,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    search_fields=["title", "content"],
-                    select_fields=["title", "content", "category", "url"],
+                    search_fields=["title", "content"],  # type: List[str]
+                    select_fields=["title", "content", "category", "url"],  # type: List[str]
                     top=10,
                 )
 
@@ -977,6 +979,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         Example Usage:
             .. code-block:: python
 
+                from typing import List
                 from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -987,8 +990,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    vector_fields=["embedding"],
-                    select_fields=["title", "content", "url"],
+                    vector_fields=["embedding"],  # type: List[str]
+                    select_fields=["title", "content", "url"],  # type: List[str]
                     top=5,
                 )
 
@@ -1063,6 +1066,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         Example Usage:
             .. code-block:: python
 
+                from typing import List
                 from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
                 from azure.core.credentials import AzureKeyCredential
@@ -1073,9 +1077,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
-                    vector_fields=["embedding_field"],
-                    search_fields=["title", "content"],
-                    select_fields=["title", "content", "url", "date"],
+                    vector_fields=["embedding_field"],  # type: List[str]
+                    search_fields=["title", "content"],  # type: List[str]
+                    select_fields=["title", "content", "url", "date"],  # type: List[str]
                     top=10,
                 )
 
