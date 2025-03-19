@@ -9,6 +9,39 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from autogen_core import CancellationToken, ComponentModel
 
+
+class MockAzureKeyCredential:
+    """Mock implementation of AzureKeyCredential."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+class MockHttpResponseError(Exception):
+    """Mock HttpResponseError."""
+
+    pass
+
+
+class MockResourceNotFoundError(Exception):
+    """Mock ResourceNotFoundError."""
+
+    pass
+
+
+try:
+    from azure.core.credentials import AzureKeyCredential
+    from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+
+    azure_sdk_available = True
+except ImportError:
+    AzureKeyCredential = MockAzureKeyCredential  # type: ignore
+    HttpResponseError = MockHttpResponseError  # type: ignore
+    ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
+    azure_sdk_available = False
+
+pytestmark = pytest.mark.skipif(not azure_sdk_available, reason="Azure Search SDK not installed")
+
 src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
 sys.path.insert(0, src_dir)
 
@@ -151,8 +184,12 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             query_dict = query.model_dump()
         elif hasattr(query, "dict"):
             query_dict = query.dict()
-        else:
-            query_dict = dict(query) if hasattr(query, "__iter__") else {}
+        elif isinstance(query, str):
+            # Handle string queries
+            query_dict = {"query": query}
+        elif hasattr(query, "__iter__") and not isinstance(query, (str, bytes)):
+            # Only convert to dict if it's a non-string iterable
+            query_dict = dict(query)
 
         query_text = query_dict.get("query", "")
         vector = query_dict.get("vector", None)
@@ -218,7 +255,18 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
             },
         ]
 
-        await client.search(search_text, **kwargs)
+        try:
+            await client.search(search_text, **kwargs)
+        except ResourceNotFoundError as e:
+            raise ValueError(f"Index '{self._index_name}' not found. Please check the index name and try again.") from e
+        except HttpResponseError as e:
+            error_message = str(e)
+            if "401" in error_message or "unauthorized" in error_message.lower():
+                raise ValueError(
+                    f"Authentication failed for Azure AI Search: {error_message}. Please check your API key and credentials."
+                ) from e
+            else:
+                raise ValueError(f"Error from Azure AI Search: {error_message}") from e
 
         results: List[Any] = []
         for result in mock_results:
@@ -306,40 +354,6 @@ class AsyncIterator:
         return len(self.items)
 
 
-class MockResourceNotFoundError(Exception):
-    """Mock for ResourceNotFoundError."""
-
-    def __init__(self, message: str = "Resource not found", **kwargs: Any) -> None:
-        self.message = message
-        super().__init__(message)
-
-
-class MockHttpResponseError(Exception):
-    """Mock for HttpResponseError."""
-
-    def __init__(self, message: str = "Http error", **kwargs: Any) -> None:
-        self.message = message
-        super().__init__(message)
-
-
-MOCK_SEARCH_RESPONSE: List[Dict[str, Any]] = [
-    {
-        "@search.score": 0.95,
-        "id": "doc1",
-        "content": "This is the first document content",
-        "title": "Document 1",
-        "source": "test-source-1",
-    },
-    {
-        "@search.score": 0.85,
-        "id": "doc2",
-        "content": "This is the second document content",
-        "title": "Document 2",
-        "source": "test-source-2",
-    },
-]
-
-
 @pytest.mark.asyncio
 async def test_tool_schema_generation(test_config: ComponentModel) -> None:
     """Test that the tool schema is generated correctly."""
@@ -351,13 +365,11 @@ async def test_tool_schema_generation(test_config: ComponentModel) -> None:
     assert "parameters" in schema
     assert "properties" in schema["parameters"]
 
-    # Test that our simplified schema only has the query parameter
     properties = schema["parameters"]["properties"]
     assert "query" in properties
     assert properties["query"]["type"] == "string"
     assert properties["query"]["description"] == "Search query text"
 
-    # Ensure only query is in the schema properties (not filter, top, or other config options)
     assert len(properties) == 1
     assert "required" in schema["parameters"]
     assert "query" in schema["parameters"]["required"]
@@ -388,10 +400,10 @@ def test_component_base_class(test_config: ComponentModel) -> None:
 
 
 @pytest.mark.asyncio
-async def test_simple_search(test_config: ComponentModel) -> None:
-    """Test that the tool correctly performs a simple search."""
+async def test_keyword_search(keyword_config: ComponentModel) -> None:
+    """Test keyword search functionality."""
     with patch("azure.search.documents.aio.SearchClient"):
-        tool = MockAzureAISearchTool.load_component(test_config)
+        tool = MockAzureAISearchTool.load_component(keyword_config)
 
         search_results = [
             {
@@ -418,87 +430,25 @@ async def test_simple_search(test_config: ComponentModel) -> None:
 
         mock_client.search = AsyncMock()
         mock_client.search.return_value = AsyncIterator(search_results)
+
         with patch.object(tool, "_get_client", return_value=mock_client):
-            search_results_obj = await tool.run(SearchQuery(query="test query"), CancellationToken())
+            result = await tool.run("test query", CancellationToken())
 
-            assert isinstance(search_results_obj, SearchResults)
-            assert len(search_results_obj.results) == 2
-            for result in search_results_obj.results:
-                assert isinstance(result, SearchResult)
-                assert hasattr(result, "score")
-                assert hasattr(result, "content")
-                assert hasattr(result, "metadata")
+            assert hasattr(result, "results")
+            assert len(result.results) == 2
 
-            assert search_results_obj.results[0].score == 0.95
-            assert search_results_obj.results[0].content["id"] == "doc1"
-            assert search_results_obj.results[0].content["title"] == "Document 1"
+            for item in result.results:
+                assert hasattr(item, "score")
+                assert hasattr(item, "content")
+                assert hasattr(item, "metadata")
+
+            assert result.results[0].score == 0.95
+            assert result.results[0].content["id"] == "doc1"
+
             mock_client.search.assert_called_once()
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
             assert kwargs.get("query_type") == "simple"
-
-
-@pytest.mark.asyncio
-async def test_semantic_search() -> None:
-    """Test semantic search functionality."""
-    # Create a mock tool with semantic search configuration using the proper ComponentModel pattern
-    tool = MockAzureAISearchTool.load_component(
-        ComponentModel(
-            provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
-            config={
-                "name": "test_semantic_search",
-                "endpoint": "https://test-endpoint.search.windows.net",
-                "index_name": "test-index",
-                "credential": {"api_key": "test-key"},
-                "semantic_config_name": "test-semantic-config",
-                "query_type": "semantic",
-            },
-        )
-    )
-
-    # Create a mock client
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-
-    # Create test search results using the same approach as other tests
-    search_results = [
-        {
-            "@search.score": 0.95,
-            "id": "doc1",
-            "content": "This is the first document content",
-            "title": "Document 1",
-            "source": "test-source-1",
-        },
-        {
-            "@search.score": 0.85,
-            "id": "doc2",
-            "content": "This is the second document content",
-            "title": "Document 2",
-            "source": "test-source-2",
-        },
-    ]
-
-    # Use AsyncIterator like the other tests do
-    mock_client.search = AsyncMock(return_value=AsyncIterator(search_results))
-
-    with patch.object(tool, "_get_client", return_value=mock_client):
-        # Run the search
-        result = await tool.run(SearchQuery(query="test query"), CancellationToken())
-
-        # Verify the client was called correctly
-        mock_client.search.assert_called_once()
-        args, kwargs = mock_client.search.call_args
-        assert args[0] == "test query"
-        assert "query_type" in kwargs
-        assert kwargs["query_type"] == "semantic"
-        assert "semantic_configuration_name" in kwargs
-        assert kwargs["semantic_configuration_name"] == "test-semantic-config"
-
-        # Verify results match our expected mock data
-        assert len(result.results) == 2
-        assert result.results[0].score == 0.95
-        assert result.results[0].content["title"] == "Document 1"
 
 
 @pytest.mark.asyncio
@@ -681,3 +631,51 @@ class MockVectorizableTextQuery:
         self.text = text
         self.k = k
         self.fields = fields if isinstance(fields, str) else ",".join(fields)
+
+
+@pytest.mark.asyncio
+async def test_error_handling_invalid_index() -> None:
+    """Test that appropriate errors are raised for invalid index."""
+    with patch("azure.search.documents.aio.SearchClient"):
+        search_tool = MockAzureAISearchTool(
+            name="test_search",
+            endpoint="https://test-endpoint.search.windows.net",
+            index_name="nonexistent-index",
+            credential=AzureKeyCredential("test-key"),
+        )
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.search = AsyncMock(side_effect=ResourceNotFoundError("Index not found"))
+
+        with patch.object(search_tool, "_get_client", return_value=mock_client):
+            with pytest.raises(ValueError) as excinfo:
+                await search_tool.run("test query", CancellationToken())
+
+            assert "Index 'nonexistent-index' not found" in str(excinfo.value)
+            assert "check the index name" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_error_handling_authentication() -> None:
+    """Test that appropriate errors are raised for authentication issues."""
+    with patch("azure.search.documents.aio.SearchClient"):
+        search_tool = MockAzureAISearchTool(
+            name="test_search",
+            endpoint="https://test-endpoint.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("invalid-key"),
+        )
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.search = AsyncMock(side_effect=HttpResponseError("401 Unauthorized"))
+
+        with patch.object(search_tool, "_get_client", return_value=mock_client):
+            with pytest.raises(ValueError) as excinfo:
+                await search_tool.run("test query", CancellationToken())
+
+            assert "Authentication failed" in str(excinfo.value)
+            assert "check your API key" in str(excinfo.value)

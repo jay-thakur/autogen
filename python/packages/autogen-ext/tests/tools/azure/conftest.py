@@ -1,6 +1,5 @@
 """Test fixtures for Azure AI Search tool tests."""
 
-import sys
 import warnings
 from typing import Any, Dict, Generator, List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,97 +7,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from autogen_core import ComponentModel
 
+
+class MockAzureKeyCredential:
+    """Mock implementation of AzureKeyCredential."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+try:
+    from azure.core.credentials import AzureKeyCredential
+
+    azure_sdk_available = True
+except ImportError:
+    AzureKeyCredential = MockAzureKeyCredential  # type: ignore
+    azure_sdk_available = False
+
 warnings.filterwarnings(
     "ignore",
     message="Type google.*uses PyType_Spec with a metaclass that has custom tp_new",
     category=DeprecationWarning,
 )
-
-
-class MockAzureKeyCredential:
-    """Mock implementation of AzureKeyCredential."""
-
-    def __init__(self, key: str = "test-key") -> None:
-        self.key = key
-
-
-class MockTokenCredential:
-    """Mock implementation of TokenCredential."""
-
-    def get_token(self, *scopes: str, **kwargs: Any) -> MagicMock:
-        return MagicMock(token="mock-token")
-
-
-class MockResourceNotFoundError(Exception):
-    """Mock implementation of ResourceNotFoundError."""
-
-    def __init__(self, message: str = "Resource not found", **kwargs: Any) -> None:
-        self.message = message
-        super().__init__(message)
-
-
-class MockHttpResponseError(Exception):
-    """Mock implementation of HttpResponseError."""
-
-    def __init__(self, message: str = "Http error", **kwargs: Any) -> None:
-        self.message = message
-        super().__init__(message)
-
-
-for module_name in [
-    "azure.core",
-    "azure.core.credentials",
-    "azure.core.exceptions",
-    "azure.identity",
-    "azure.cosmos",
-    "azure.cosmos.cosmos_client",
-    "azure.cosmos.partition_key",
-    "azure.cosmos.container",
-    "azure.cosmos.database",
-    "azure.cosmos.exceptions",
-    "azure.search.documents",
-    "azure.search.documents.aio",
-    "azure.search.documents.models",
-    "azure.search.documents.indexes",
-    "azure.search.documents.indexes.models",
-    "azure.search.documents.indexes.aio",
-    "azure.mgmt.search",
-    "azure.storage.blob",
-    "azure.storage.queue",
-    "azure.storage.common",
-    "azure.ai.ml",
-    "azure.ai.formrecognizer",
-    "azure.openai",
-]:
-    if module_name not in sys.modules:
-        sys.modules[module_name] = MagicMock()
-
-
-credentials = sys.modules["azure.core.credentials"]
-credentials.AzureKeyCredential = MockAzureKeyCredential  # type: ignore
-credentials.TokenCredential = MockTokenCredential  # type: ignore
-
-exceptions = sys.modules["azure.core.exceptions"]
-exceptions.ResourceNotFoundError = MockResourceNotFoundError  # type: ignore
-exceptions.HttpResponseError = MockHttpResponseError  # type: ignore
-
-cosmos_module = sys.modules["azure.cosmos"]
-cosmos_module.CosmosClient = MagicMock  # type: ignore
-cosmos_module.ContainerProxy = MagicMock  # type: ignore
-cosmos_module.DatabaseProxy = MagicMock  # type: ignore
-
-partition_key_module = sys.modules["azure.cosmos.partition_key"]
-partition_key_module.PartitionKey = MagicMock  # type: ignore
-
-blob_module = sys.modules["azure.storage.blob"]
-blob_module.BlobServiceClient = MagicMock  # type: ignore
-blob_module.ContainerClient = MagicMock  # type: ignore
-blob_module.BlobClient = MagicMock  # type: ignore
-
-if "azure.identity" in sys.modules:
-    identity_module = sys.modules["azure.identity"]
-    identity_module.DefaultAzureCredential = MagicMock  # type: ignore
-    identity_module.ClientSecretCredential = MagicMock  # type: ignore
 
 
 @pytest.fixture
@@ -110,16 +39,16 @@ def mock_vectorized_query() -> Generator[MagicMock, None, None]:
 
 @pytest.fixture
 def test_config() -> ComponentModel:
-    """Create a test configuration for the Azure AI Search tool."""
+    """Return a test configuration for the Azure AI Search tool."""
     return ComponentModel(
-        provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
+        provider="autogen_ext.tools.azure.MockAzureAISearchTool",
         config={
             "name": "TestAzureSearch",
             "description": "Test Azure AI Search Tool",
             "endpoint": "https://test-search-service.search.windows.net",
             "index_name": "test-index",
             "api_version": "2023-10-01-Preview",
-            "credential": {"api_key": "test-key"},
+            "credential": AzureKeyCredential("test-key") if azure_sdk_available else {"api_key": "test-key"},
             "query_type": "simple",
             "search_fields": ["content", "title"],
             "select_fields": ["id", "content", "title", "source"],
@@ -129,18 +58,57 @@ def test_config() -> ComponentModel:
 
 
 @pytest.fixture
+def keyword_config() -> ComponentModel:
+    """Return a keyword search configuration."""
+    return ComponentModel(
+        provider="autogen_ext.tools.azure.MockAzureAISearchTool",
+        config={
+            "name": "KeywordSearch",
+            "description": "Keyword search tool",
+            "endpoint": "https://test-search-service.search.windows.net",
+            "index_name": "test-index",
+            "credential": AzureKeyCredential("test-key") if azure_sdk_available else {"api_key": "test-key"},
+            "query_type": "simple",
+            "search_fields": ["content", "title"],
+            "select_fields": ["id", "content", "title", "source"],
+        },
+    )
+
+
+@pytest.fixture
 def vector_config() -> ComponentModel:
     """Create a test configuration for vector search."""
     return ComponentModel(
-        provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
+        provider="autogen_ext.tools.azure.MockAzureAISearchTool",
         config={
-            "name": "TestAzureSearch",
-            "description": "Test Azure AI Search Tool",
+            "name": "VectorSearch",
+            "description": "Vector search tool",
             "endpoint": "https://test-search-service.search.windows.net",
             "index_name": "test-index",
             "api_version": "2023-10-01-Preview",
-            "credential": {"api_key": "test-key"},
+            "credential": AzureKeyCredential("test-key") if azure_sdk_available else {"api_key": "test-key"},
             "query_type": "vector",
+            "vector_fields": ["embedding"],
+            "select_fields": ["id", "content", "title", "source"],
+            "top": 5,
+        },
+    )
+
+
+@pytest.fixture
+def hybrid_config() -> ComponentModel:
+    """Create a test configuration for hybrid search."""
+    return ComponentModel(
+        provider="autogen_ext.tools.azure.MockAzureAISearchTool",
+        config={
+            "name": "HybridSearch",
+            "description": "Hybrid search tool",
+            "endpoint": "https://test-search-service.search.windows.net",
+            "index_name": "test-index",
+            "api_version": "2023-10-01-Preview",
+            "credential": AzureKeyCredential("test-key") if azure_sdk_available else {"api_key": "test-key"},
+            "query_type": "simple",
+            "search_fields": ["content", "title"],
             "vector_fields": ["embedding"],
             "select_fields": ["id", "content", "title", "source"],
             "top": 5,
@@ -201,26 +169,3 @@ def mock_search_client(mock_search_response: List[Dict[str, Any]]) -> tuple[Magi
     patcher = patch("azure.search.documents.aio.SearchClient", return_value=mock_client)
 
     return mock_client, patcher
-
-
-@pytest.fixture
-def simple_config() -> ComponentModel:
-    """Create a test configuration for simple search."""
-    return ComponentModel(
-        provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
-        config={
-            "name": "TestAzureSearch",
-            "description": "Test Azure AI Search Tool",
-            "endpoint": "https://test-search-service.search.windows.net",
-            "index_name": "test-index",
-            "api_version": "2023-10-01-Preview",
-            "credential": {"api_key": "test-key"},
-            "query_type": "simple",
-            "search_fields": ["content", "title"],
-            "select_fields": ["id", "content", "title", "source"],
-            "top": 5,
-            "filter": None,
-            "enable_caching": False,
-            "cache_ttl_seconds": 300,
-        },
-    )

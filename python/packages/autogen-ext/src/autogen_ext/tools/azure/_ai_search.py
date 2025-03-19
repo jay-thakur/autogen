@@ -1,118 +1,8 @@
-"""Azure AI Search Tool for AutoGen
-
-This module provides tools for querying Azure AI Search indexes using various search methods
-including simple text search, full text search, semantic search, and vector search.
-
-Overview:
-    The Azure AI Search tools allow agents to search and retrieve information from
-    Azure AI Search indexes. The main tool class is AzureAISearchTool, which
-    leverages Azure AI Search's built-in vectorization capabilities for advanced search.
-
-Core Search Types:
-    - Simple text search: Basic keyword matching
-    - Full text search: Enhanced text analysis with Azure's full-text capabilities
-    - Semantic search: Understanding the meaning of queries using Azure's semantic ranking
-    - Vector search: Using Azure's built-in vectorization for similarity matching
-
-Composite Search Types:
-    - Hybrid search: A convenience method that combines semantic and vector search capabilities
-
-Quick Start:
-    ```python
-    from autogen_ext.tools.azure import AzureAISearchTool
-    from azure.core.credentials import AzureKeyCredential
-
-    # Create a basic search tool
-    search_tool = AzureAISearchTool.create_simple_search(
-        name="simple_search",
-        endpoint="https://your-search-service.search.windows.net",
-        index_name="your-index",
-        credential=AzureKeyCredential("your-api-key"),
-    )
-
-    # Run a search
-    results = await search_tool.run(args={"query": "your search query"})
-    print(f"Found {len(results.results)} results")
-
-    # Display the results
-    for result in results.results:
-        print(f"Score: {result.score}, Title: {result.content.get('title')}")
-        print(f"Content: {result.content.get('content')[:100]}...")
-        print("-" * 50)
-    ```
-
-Advanced Usage Examples:
-    ```python
-    # Example 1: Filter results by category (filter specified at creation time)
-    filtered_search = AzureAISearchTool.create_simple_search(
-        name="science_articles",
-        endpoint="https://your-search-service.search.windows.net",
-        index_name="your-index",
-        credential=AzureKeyCredential("your-api-key"),
-        filter="category eq 'science'",  # Pre-configured filter
-        top=5,  # Limit to 5 results
-    )
-
-    science_results = await filtered_search.run(args={"query": "climate change"})
-
-    # Example 2: Enable caching for performance
-    cached_search = AzureAISearchTool.create_simple_search(
-        name="cached_search",
-        endpoint="https://your-search-service.search.windows.net",
-        index_name="your-index",
-        credential=AzureKeyCredential("your-api-key"),
-        enable_caching=True,
-        cache_ttl_seconds=300,  # Cache results for 5 minutes
-    )
-    ```
-
-Requirements:
-    - An Azure AI Search service (Standard tier or higher recommended for semantic/vector search)
-    - Appropriate credentials (API key or Azure AD credentials)
-    - For vector search: An index with vector fields populated with compatible embeddings
-      (See: https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-configure)
-
-Troubleshooting:
-    - Authentication errors: Verify your credential (API key or Azure AD token) is correct
-    - "Index not found": Check that your index_name exists in your Azure service
-    - Vector search errors: Ensure your index has properly configured vector fields
-      matching the dimension of your embedding model
-    - Performance issues: Consider enabling caching for repeated queries
-    - Rate limits: Adjust retry settings if hitting rate limits based on your Azure service tier
-
-Choosing Search Types:
-    - simple: Fast keyword matching, good for exact matches
-    - full: Advanced text analysis with language understanding
-    - semantic: Understanding meaning and context, good for natural language queries
-    - vector: Finding similar concepts even with different terminology
-
-For more information about Azure AI Search, see:
-https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search
-"""
-
-from typing import Any, List, Type, TypeVar, Union, cast
-
-try:
-    from azure.search.documents.models import VectorizableTextQuery  # type: ignore
-except ImportError:
-    # Fallback implementation with a different name to avoid type conflicts
-    class _VectorizableTextQueryFallback:
-        """Fallback implementation when Azure SDK is not installed."""
-
-        def __init__(self, text: str, k: int, fields: Union[str, List[str]]) -> None:
-            self.text = text
-            self.k = k
-            self.fields = fields if isinstance(fields, str) else ",".join(fields)
-
-    # Assign our fallback to the name used in the code
-    VectorizableTextQuery = _VectorizableTextQueryFallback  # type: ignore
-
-
 import logging
 import time
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Dict, Literal, Optional, overload
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Type, TypeVar, Union, cast, overload
 
 from autogen_core import CancellationToken, ComponentModel
 from autogen_core.tools import BaseTool, ToolSchema
@@ -121,8 +11,10 @@ from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.search.documents.aio import SearchClient
 from pydantic import BaseModel, Field
 
-_has_retry_policy = False
+if TYPE_CHECKING:
+    from azure.search.documents.models import VectorizableTextQuery
 
+_has_retry_policy = False
 try:
     from azure.core.pipeline.policies import RetryPolicy  # type: ignore[assignment]
 
@@ -137,9 +29,22 @@ except ImportError:
 
 HAS_RETRY_POLICY = _has_retry_policy
 
+has_azure_search = False
 
-if TYPE_CHECKING:
-    pass
+if not TYPE_CHECKING:
+    try:
+        from azure.search.documents.models import VectorizableTextQuery
+
+        has_azure_search = True
+    except ImportError:
+
+        class VectorizableTextQuery:
+            """Fallback implementation when Azure SDK is not installed."""
+
+            def __init__(self, text: str, k: int, fields: Union[str, List[str]]) -> None:
+                self.text = text
+                self.k = k
+                self.fields = fields if isinstance(fields, str) else ",".join(fields)
 
 
 class _FallbackAzureAISearchConfig:
@@ -242,225 +147,18 @@ class SearchResults(BaseModel):
 
 
 class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
-    """A tool for performing searches using Azure AI Search.
+    """Abstract base class for Azure AI Search tools.
 
-    This tool integrates with Azure AI Search to perform different types of searches:
-    - Simple text search: Basic keyword matching for straightforward queries
-    - Full text search: Enhanced text analysis with language processing
-    - Semantic search: Understanding the meaning and context of queries
-    - Vector search: Using embeddings for similarity and conceptual matching
+    This class defines the common interface and functionality for all Azure AI Search tools.
+    It handles configuration management, client initialization, and the abstract methods
+    that subclasses must implement.
 
-    .. note::
-        Requires Azure AI Search service and appropriate credentials.
-        Compatible with Azure AI Search API versions 2023-07-01-Preview and above.
+    Attributes:
+        search_config: Configuration parameters for the search service.
 
-    .. important::
-        For vector search functionality, your Azure AI Search index must contain vector fields
-        populated with OpenAI-compatible embeddings. The embeddings in your index should be
-        generated using the same or compatible embedding models as specified in this tool.
-
-    Quick Start:
-        .. code-block:: python
-
-            from autogen_core import ComponentModel
-            from autogen_ext.tools.azure import AzureAISearchTool
-            from azure.core.credentials import AzureKeyCredential
-
-            # Create search tool with minimal configuration
-            search_tool = AzureAISearchTool.load_component(
-                ComponentModel(
-                    provider="autogen_ext.tools.azure.AzureAISearchTool",
-                    config={
-                        "name": "AzureSearch",
-                        "endpoint": "https://your-search-service.search.windows.net",
-                        "index_name": "your-index",
-                        "credential": {"api_key": "your-api-key"},
-                        "query_type": "simple",
-                    },
-                )
-            )
-
-            # Run a search
-            results = await search_tool.run(args={"query": "your search query"})
-            print(f"Found {len(results.results)} results")
-
-    Examples:
-        .. code-block:: python
-
-            # Simple text search example
-            from autogen_core import ComponentModel
-            from autogen_ext.tools.azure import AzureAISearchTool
-            from azure.core.credentials import AzureKeyCredential
-
-            # Create a tool instance with API key
-            search_tool = AzureAISearchTool.load_component(
-                ComponentModel(
-                    provider="autogen_ext.tools.azure.AzureAISearchTool",
-                    config={
-                        "name": "AzureSearch",
-                        "description": "Search documents in Azure AI Search",
-                        "endpoint": "https://your-search-service.search.windows.net",
-                        "index_name": "your-index",
-                        "api_version": "2023-10-01-Preview",
-                        "credential": {"api_key": "your-api-key"},
-                        "query_type": "simple",
-                        "search_fields": ["content", "title"],
-                        "select_fields": ["id", "content", "title", "source"],
-                        "top": 5,
-                        "openai_client": openai_client,
-                        "embedding_model": "text-embedding-ada-002",
-                    },
-                )
-            )
-
-            # Run a simple search
-            result = await search_tool.run(args={"query": "machine learning techniques"})
-
-            # Process results
-            for item in result.results:
-                print(f"Score: {item.score}, Content: {item.content}")
-
-            # Search with filtering
-            filtered_result = await search_tool.run(args={"query": "neural networks", "filter": "source eq 'academic-papers'"})
-
-        .. code-block:: python
-
-            # Semantic search with OpenAI embeddings
-            from openai import AsyncOpenAI
-
-            # Initialize OpenAI client
-            openai_client = AsyncOpenAI(api_key="your-openai-api-key")
-
-            # Create semantic search tool
-            semantic_search_tool = AzureAISearchTool.load_component(
-                ComponentModel(
-                    provider="autogen_ext.tools.azure.AzureAISearchTool",
-                    config={
-                        "name": "SemanticSearch",
-                        "description": "Semantic search with Azure AI Search",
-                        "endpoint": "https://your-search-service.search.windows.net",
-                        "index_name": "your-index",
-                        "api_version": "2023-10-01-Preview",
-                        "credential": {"api_key": "your-api-key"},
-                        "query_type": "semantic",
-                        "semantic_config_name": "your-semantic-config",
-                        "search_fields": ["content", "title"],
-                        "select_fields": ["id", "content", "title", "source"],
-                        "top": 5,
-                    },
-                )
-            )
-
-            # Perform a semantic search
-            try:
-                result = await semantic_search_tool.run(args={"query": "latest advances in neural networks"})
-                print(f"Found {len(result.results)} results")
-            except Exception as e:
-                print(f"Search error: {e}")
-
-        .. code-block:: python
-
-            # Vector search example
-            # Create vector search tool
-            vector_search_tool = AzureAISearchTool.load_component(
-                ComponentModel(
-                    provider="autogen_ext.tools.azure.AzureAISearchTool",
-                    config={
-                        "name": "VectorSearch",
-                        "description": "Vector search with Azure AI Search",
-                        "endpoint": "https://your-search-service.search.windows.net",
-                        "index_name": "your-index",
-                        "api_version": "2023-10-01-Preview",
-                        "credential": {"api_key": "your-api-key"},
-                        "query_type": "vector",
-                        "vector_fields": ["embedding"],
-                        "select_fields": ["id", "content", "title", "source"],
-                        "top": 5,
-                    },
-                )
-            )
-
-            # Perform a vector search with a text query (will be converted to vector)
-            result = await vector_search_tool.run(args={"query": "quantum computing algorithms"})
-
-            # Or use a pre-computed vector directly
-            vector = [0.1, 0.2, 0.3, 0.4]  # Example vector (would be much longer in practice)
-            result = await vector_search_tool.run(args={"vector": vector})
-
-    Using with AutoGen Agents:
-        .. code-block:: python
-
-            # Using with the latest AutoGen Agents API
-            from autogen import AssistantAgent, UserProxyAgent, config_list_from_json
-            from autogen_ext.tools.azure import AzureAISearchTool
-
-            # Create the search tool
-            search_tool = AzureAISearchTool.create_semantic_search(
-                name="DocumentSearch",
-                endpoint="https://your-search-service.search.windows.net",
-                index_name="your-index",
-                credential={"api_key": "your-api-key"},
-                semantic_config_name="default",
-            )
-
-            # Configure the agents with the latest API format
-            config_list = config_list_from_json("path/to/your/config.json")
-            llm_config = {"config_list": config_list, "tools": [search_tool]}
-
-            # Create the assistant with the search tool capability
-            assistant = AssistantAgent(
-                name="research_assistant",
-                llm_config=llm_config,
-                system_message="You are a research assistant with access to a document search tool.",
-            )
-
-            # Create a user proxy agent
-            user_proxy = UserProxyAgent(name="user", human_input_mode="ALWAYS")
-
-            # Start the conversation
-            user_proxy.initiate_chat(assistant, message="Find information about renewable energy technologies")
-
-    Result Structure:
-        The search results are returned as a `SearchResults` object containing:
-
-        .. code-block:: python
-
-            class SearchResults(BaseModel):
-                results: List[SearchResult]
-
-
-            class SearchResult(BaseModel):
-                score: float  # Relevance score (0.0-1.0)
-                content: Dict[str, Any]  # Document content fields
-                metadata: Dict[str, Any]  # System metadata
-
-    Troubleshooting:
-        - If you receive authentication errors, verify your credential is correct
-        - For "index not found" errors, check that the index name exists in your Azure service
-        - For performance issues, consider using vector search with pre-computed embeddings
-        - Rate limits may apply based on your Azure service tier
-
-    External Resources:
-        - `Azure AI Search Documentation <https://learn.microsoft.com/en-us/azure/search/search-what-is-azure-search>`_
-        - `Create an Azure AI Search Index <https://learn.microsoft.com/en-us/azure/search/search-get-started-portal>`_
-        - `Azure AI Search Vector Search <https://learn.microsoft.com/en-us/azure/search/vector-search-overview>`_
-
-    Args:
-        name (str): Name for the tool instance.
-        endpoint (str): The full URL of your Azure AI Search service.
-        index_name (str): Name of the search index to query.
-        credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Azure credential for authentication.
-        description (Optional[str]): Optional description explaining the tool's purpose.
-        api_version (str): Azure AI Search API version to use.
-        semantic_config_name (Optional[str]): Name of the semantic configuration.
-        query_type (str): The type of search to perform ("simple", "full", "semantic", "vector").
-        search_fields (Optional[List[str]]): Fields to search within documents.
-        select_fields (Optional[List[str]]): Fields to return in search results.
-        vector_fields (Optional[List[str]]): Fields to use for vector search.
-        top (Optional[int]): Maximum number of results to return.
-        filter (Optional[str]): OData filter expression to refine search results
-        enable_caching (bool): Whether to cache search results
-        cache_ttl_seconds (int): How long to cache results in seconds
+    Note:
+        This is an abstract base class and should not be instantiated directly.
+        Use concrete implementations or the factory methods in AzureAISearchTool.
     """
 
     def __init__(
@@ -471,35 +169,41 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         description: Optional[str] = None,
         api_version: str = "2023-11-01",
-        semantic_config_name: Optional[str] = None,
-        query_type: Literal["simple", "full", "semantic", "vector"] = "simple",
+        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"] = "simple",
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         vector_fields: Optional[List[str]] = None,
         top: Optional[int] = None,
         filter: Optional[str] = None,
+        semantic_config_name: Optional[str] = None,
         enable_caching: bool = False,
         cache_ttl_seconds: int = 300,
     ):
         """Initialize the Azure AI Search tool.
 
         Args:
-            name: The name of this tool instance
-            endpoint: The full URL of your Azure AI Search service
-            index_name: Name of the search index to query
-            credential: Azure credential for authentication (API key or token)
-            description: Optional description explaining the tool's purpose
-            api_version: Azure AI Search API version to use
-            semantic_config_name: Name of the semantic configuration (for semantic search)
-            query_type: Type of search to perform ("simple", "full", "semantic", "vector")
-            search_fields: Fields to search within documents
-            select_fields: Fields to return in search results
-            vector_fields: Fields to use for vector search
-            top: Maximum number of results to return
-            filter: OData filter expression to refine search results
-            enable_caching: Whether to cache search results
-            cache_ttl_seconds: How long to cache results in seconds
+            name (str): The name of this tool instance
+            endpoint (str): The full URL of your Azure AI Search service
+            index_name (str): Name of the search index to query
+            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Azure credential for authentication (API key or token)
+            description (Optional[str]): Optional description explaining the tool's purpose
+            api_version (str): Azure AI Search API version to use
+            query_type (Literal["simple", "full", "semantic", "vector", "hybrid"]): Type of search to perform
+            search_fields (Optional[List[str]]): Fields to search within documents
+            select_fields (Optional[List[str]]): Fields to return in search results
+            vector_fields (Optional[List[str]]): Fields to use for vector search
+            top (Optional[int]): Maximum number of results to return
+            filter (Optional[str]): OData filter expression to refine search results
+            semantic_config_name (Optional[str]): Semantic configuration name for enhanced results
+            enable_caching (bool): Whether to cache search results
+            cache_ttl_seconds (int): How long to cache results in seconds
         """
+        if not has_azure_search:
+            raise ImportError(
+                "Azure Search SDK is required but not installed. "
+                "Please install it with: pip install azure-search-documents>=11.4.0"
+            )
+
         if description is None:
             description = (
                 f"Search for information in the {index_name} index using Azure AI Search. "
@@ -513,19 +217,13 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             description=description,
         )
 
-        if isinstance(credential, dict) and "api_key" in credential:
-            actual_credential: Union[AzureKeyCredential, TokenCredential] = AzureKeyCredential(credential["api_key"])
-        else:
-            actual_credential = cast(Union[AzureKeyCredential, TokenCredential], credential)
-
         self.search_config = AzureAISearchConfig(
             name=name,
             description=description,
             endpoint=endpoint,
             index_name=index_name,
-            credential=actual_credential,
+            credential=self._process_credential(credential),
             api_version=api_version,
-            semantic_config_name=semantic_config_name,
             query_type=query_type,
             search_fields=search_fields,
             select_fields=select_fields,
@@ -543,64 +241,90 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         self._client: Optional[SearchClient] = None
         self._cache: Dict[str, Dict[str, Any]] = {}
 
-    def _get_client(self) -> SearchClient:
-        """Initialize and return the search client."""
-        if self._client is None:
-            client_args: Dict[str, Any] = {
-                "endpoint": self._endpoint,
-                "index_name": self._index_name,
-                "credential": self._credential,
-                "api_version": self._api_version,
-            }
+    def _process_credential(
+        self, credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]]
+    ) -> Union[AzureKeyCredential, TokenCredential]:
+        """Process credential to ensure it's the correct type."""
+        if isinstance(credential, dict):
+            if "api_key" in credential:
+                return AzureKeyCredential(credential["api_key"])
+            raise ValueError(
+                "If credential is a dict, it must contain an 'api_key' key with your API key as the value"
+            ) from None
+        return credential
 
-            if HAS_RETRY_POLICY and getattr(self.search_config, "retry_enabled", False):
-                try:
-                    retry_policy: Any = RetryPolicy(
-                        retry_mode=getattr(self.search_config, "retry_mode", "fixed"),
-                        retry_total=getattr(self.search_config, "retry_max_attempts", 3),
-                    )
-                    client_args["retry_policy"] = retry_policy
-                except Exception as e:
-                    logging.warning(f"Failed to create RetryPolicy: {e}")
+    async def _get_client(self) -> SearchClient:
+        """Get the search client for the configured index."""
+        if self._client is not None:
+            return self._client
 
-            self._client = SearchClient(**client_args)
+        try:
+            self._client = SearchClient(
+                endpoint=self.search_config.endpoint,
+                index_name=self.search_config.index_name,
+                credential=self.search_config.credential,
+                api_version=self.search_config.api_version,
+            )
 
-        assert self._client is not None
-        return self._client
+            assert self._client is not None
+            return self._client
+        except ResourceNotFoundError as e:
+            raise ValueError(
+                f"Index '{self.search_config.index_name}' not found. "
+                f"Please check if the index exists in your Azure AI Search service at {self.search_config.endpoint}"
+            ) from e
+        except HttpResponseError as e:
+            if "401" in str(e):
+                raise ValueError(
+                    f"Authentication failed. Please check your API key or credentials. Error: {str(e)}"
+                ) from e
+            elif "403" in str(e):
+                raise ValueError(
+                    f"Permission denied. Please check that your credentials have access to this index. Error: {str(e)}"
+                ) from e
+            else:
+                raise ValueError(f"Error connecting to Azure AI Search: {str(e)}") from e
+        except Exception as e:
+            raise ValueError(f"Unexpected error initializing search client: {str(e)}") from e
 
-    async def run(self, args: SearchQuery, cancellation_token: CancellationToken) -> SearchResults:
-        """Run the search query.
-
-        This method uses a simplified interface where you only need to provide a search query string.
-        All configuration for search type, filters, vector fields, etc. is defined during tool creation,
-        not at query time. This approach makes the tool more user-friendly while still being powerful.
+    async def run(
+        self, args: Union[str, Dict[str, Any], SearchQuery], cancellation_token: Optional[CancellationToken] = None
+    ) -> SearchResults:
+        """Execute a search against the Azure AI Search index.
 
         Args:
-            args (SearchQuery): The search query parameters, containing only:
-                - query (str): The search query text
-            cancellation_token (CancellationToken): Token for cancelling the operation.
+            args: Search query text or SearchQuery object
+            cancellation_token: Optional token to cancel the operation
 
         Returns:
-            SearchResults: An object containing a list of search results, each with:
-                - score (float): The search relevance score
-                - content (Dict[str, Any]): The document content
-                - metadata (Dict[str, Any]): Additional metadata about the document
-
-        Raises:
-            Exception: If the search operation fails, with detailed error messages for common issues.
+            Search results
         """
+        if isinstance(args, str):
+            search_query = SearchQuery(query=args)
+        elif isinstance(args, dict) and "query" in args:
+            search_query = SearchQuery(query=args["query"])
+        elif isinstance(args, SearchQuery):
+            search_query = args
+        else:
+            raise ValueError(f"Invalid search query format: {args}. Expected string, dict with 'query', or SearchQuery")
+
         try:
-            if cancellation_token.is_cancelled():
+            if cancellation_token is not None and cancellation_token.is_cancelled():
                 raise Exception("Operation cancelled")
 
             if self.search_config.enable_caching:
-                cache_key = f"{args.query}:{self.search_config.top}"
+                cache_key = f"{search_query.query}:{self.search_config.top}"
                 if cache_key in self._cache:
                     cache_entry = self._cache[cache_key]
                     cache_age = time.time() - cache_entry["timestamp"]
                     if cache_age < self.search_config.cache_ttl_seconds:
-                        logger.debug(f"Using cached results for query: {args.query}")
-                        return SearchResults(results=cache_entry["results"])
+                        logger.debug(f"Using cached results for query: {search_query.query}")
+                        return SearchResults(
+                            results=[
+                                SearchResult(score=r.score, content=r.content, metadata=r.metadata)
+                                for r in cache_entry["results"]
+                            ]
+                        )
 
             search_options: Dict[str, Any] = {}
             search_options["query_type"] = self.search_config.query_type
@@ -621,21 +345,21 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                 search_options["query_type"] = "semantic"
                 search_options["semantic_configuration_name"] = self.search_config.semantic_config_name
 
-            text_query = args.query
+            text_query = search_query.query
             if self.search_config.query_type == "vector" or (
                 self.search_config.vector_fields and len(self.search_config.vector_fields) > 0
             ):
                 if self.search_config.vector_fields:
                     vector_fields_list = self.search_config.vector_fields
                     search_options["vector_queries"] = [
-                        VectorizableTextQuery(text=args.query, k=int(self.search_config.top or 5), fields=field)
+                        VectorizableTextQuery(text=search_query.query, k=int(self.search_config.top or 5), fields=field)
                         for field in vector_fields_list
                     ]
 
-            if cancellation_token.is_cancelled():
+            if cancellation_token is not None and cancellation_token.is_cancelled():
                 raise Exception("Operation cancelled")
 
-            client = self._get_client()
+            client = await self._get_client()
             results: List[SearchResult] = []
 
             async with client:
@@ -684,51 +408,18 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                 cache_key = f"{text_query}_{self.search_config.top}"
                 self._cache[cache_key] = {"results": results, "timestamp": time.time()}
 
-            return SearchResults(results=results)
-
+            return SearchResults(
+                results=[SearchResult(score=r.score, content=r.content, metadata=r.metadata) for r in results]
+            )
         except Exception as e:
-            if isinstance(e, ResourceNotFoundError) or "ResourceNotFoundError" in str(type(e)):
-                error_msg = str(e)
-                if "test-index" in error_msg or self.search_config.index_name in error_msg:
-                    raise Exception(
-                        f"Index '{self.search_config.index_name}' not found - Please verify the index name is correct and exists in your Azure AI Search service"
-                    ) from e
-                elif "cognitive-services" in error_msg.lower():
-                    raise Exception(
-                        f"Azure AI Search service not found - Please verify your endpoint URL is correct: {e}"
-                    ) from e
-                else:
-                    raise Exception(f"Azure AI Search resource not found: {e}") from e
-
-            elif isinstance(e, HttpResponseError) or "HttpResponseError" in str(type(e)):
-                error_msg = str(e)
-                if "invalid_api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
-                    raise Exception(
-                        "Authentication failed: Invalid API key or credentials - Please verify your credentials are correct"
-                    ) from e
-                elif "syntax_error" in error_msg.lower():
-                    raise Exception(
-                        f"Invalid query syntax - Please check your search query format: {args.query}"
-                    ) from e
-                elif "bad request" in error_msg.lower():
-                    raise Exception(f"Bad request - The search request contains invalid parameters: {e}") from e
-                elif "timeout" in error_msg.lower():
-                    raise Exception(
-                        "Azure AI Search operation timed out - Consider simplifying your query or checking service health"
-                    ) from e
-                elif "service unavailable" in error_msg.lower():
-                    raise Exception("Azure AI Search service is currently unavailable - Please try again later") from e
-                else:
-                    raise Exception(f"Azure AI Search HTTP error: {e}") from e
-
-            elif cancellation_token.is_cancelled():
-                raise Exception("Operation cancelled") from None
-
-            else:
-                logger.error(f"Unexpected error during search operation: {e}")
-                raise Exception(
-                    f"Error during search operation: {e} - Please check your search configuration and Azure AI Search service status"
+            if "not found" in str(e).lower():
+                raise ValueError(
+                    f"Index '{self.search_config.index_name}' not found. Please check the index name and try again."
                 ) from e
+            elif "unauthorized" in str(e).lower():
+                raise ValueError("Authentication failed. Please check your API key.") from e
+            else:
+                raise ValueError(f"Search error: {str(e)}") from e
 
     @abstractmethod
     async def _get_embedding(self, query: str) -> List[float]:
@@ -775,7 +466,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             BaseAzureAISearchTool: An initialized instance of the search tool
         """
         query_type_str = getattr(config, "query_type", "simple")
-        query_type: Literal["simple", "full", "semantic", "vector"]
+        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"]
 
         if query_type_str == "simple":
             query_type = "simple"
@@ -801,13 +492,13 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             credential=getattr(config, "credential", {}),
             description=getattr(config, "description", None),
             api_version=getattr(config, "api_version", "2023-11-01"),
-            semantic_config_name=getattr(config, "semantic_config_name", None),
             query_type=query_type,
             search_fields=getattr(config, "search_fields", None),
             select_fields=getattr(config, "select_fields", None),
             vector_fields=getattr(config, "vector_fields", None),
             top=getattr(config, "top", None),
             filter=getattr(config, "filter", None),
+            semantic_config_name=getattr(config, "semantic_config_name", None),
             enable_caching=getattr(config, "enable_caching", False),
             cache_ttl_seconds=getattr(config, "cache_ttl_seconds", 300),
         )
@@ -897,178 +588,62 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
         return "\n".join(result_strings)
 
+    def _format_result_for_display(self, result: SearchResults) -> str:
+        """Format search results for display.
+
+        Args:
+            result: The search results to format
+
+        Returns:
+            A formatted JSON string representation of the results
+        """
+        import json
+
+        results_dict = {
+            "count": len(result.results),
+            "results": [{"score": r.score, "content": r.content, "metadata": r.metadata} for r in result.results],
+        }
+
+        return json.dumps(results_dict, indent=2)
+
+    def _convert_to_string(self, value: SearchResults) -> str:
+        """Convert search results to a string representation.
+
+        Args:
+            value: The search results to convert
+
+        Returns:
+            A JSON string representation of the results
+        """
+        import json
+
+        results_dict = {
+            "count": len(value.results),
+            "results": [{"score": r.score, "content": r.content, "metadata": r.metadata} for r in value.results],
+        }
+
+        return json.dumps(results_dict, indent=2)
+
 
 _allow_private_constructor = ContextVar("_allow_private_constructor", default=False)
 
 
 class AzureAISearchTool(BaseAzureAISearchTool):
-    """A tool for performing searches using Azure AI Search with built-in vectorization.
+    """Azure AI Search tool for querying Azure search indexes.
 
-    This tool extends the base Azure AI Search tool with Azure's built-in vectorizer
-    capabilities for generating vector embeddings at query time.
+    This tool provides a simplified interface for querying Azure AI Search indexes using
+    various search methods. The tool supports four main search types:
 
-    Note:
-        Do not initialize this class directly. Use factory methods like
-        create_semantic_search(), create_vector_search(), or load_component() instead.
+    1. Keyword Search: Traditional text-based search using Azure's text analysis
+    2. Full-Text Search: Enhanced text search with language-specific analyzers
+    3. Vector Search: Semantic similarity search using vector embeddings
+    4. Hybrid Search: Combines text and vector search for comprehensive results
 
-    Examples:
-        Basic Simple Search (Using the simplified interface with only a query):
-
-        .. code-block:: python
-
-            import asyncio
-            from autogen_ext.tools.azure import AzureAISearchTool
-
-
-            async def simple_search_example():
-                # Create simple search tool
-                search_tool = AzureAISearchTool.create_simple_search(
-                    name="docs_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index-name",
-                    credential={"api_key": "your-search-api-key"},
-                )
-
-                #  Simple interface - just provide a query string!
-                results = await search_tool.run(args={"query": "machine learning techniques"})
-
-                # Process results
-                print(f"Found {len(results.results)} results")
-                for result in results.results:
-                    print(f"Score: {result.score}")
-                    print(f"Title: {result.content.get('title', 'No title')}")
-                    print(f"Content: {result.content.get('content', 'No content')[:100]}...")
-                    print("-" * 50)
-
-
-            # Run the example
-            if __name__ == "__main__":
-                asyncio.run(simple_search_example())
-
-        Semantic Search with Top Results Limit:
-
-        .. code-block:: python
-
-            import asyncio
-            from autogen_ext.tools.azure import AzureAISearchTool
-
-
-            async def semantic_search_example():
-                # Create semantic search tool with advanced configuration at creation time
-                search_tool = AzureAISearchTool.create_semantic_search(
-                    name="semantic_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index-name",
-                    credential={"api_key": "your-search-api-key"},
-                    semantic_config_name="default",
-                    search_fields=["title", "content"],
-                    select_fields=["id", "title", "content", "url"],
-                )
-
-                #  Still a simple interface at query time - just query and optional top parameter
-                results = await search_tool.run(args={"query": "How do neural networks learn?", "top": 5})
-
-                # Process results
-                print(f"Found {len(results.results)} results")
-                for result in results.results:
-                    print(f"Score: {result.score}")
-                    print(f"Title: {result.content.get('title', 'No title')}")
-                    print(f"URL: {result.content.get('url', 'No URL')}")
-                    print("-" * 50)
-
-
-            if __name__ == "__main__":
-                asyncio.run(semantic_search_example())
-
-        Vector Search with Pre-configured Filter:
-
-        .. code-block:: python
-
-            import asyncio
-            from autogen_ext.tools.azure import AzureAISearchTool
-
-
-            async def vector_search_example():
-                # Create vector search tool with complex configuration at creation time
-                search_tool = AzureAISearchTool.create_vector_search(
-                    name="vector_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index-name",
-                    credential={"api_key": "your-search-api-key"},
-                    vector_fields=["embedding"],
-                    filter="year gt 2020",  # Pre-configured filter applied to all searches
-                )
-
-                #  Simple interface at query time - complex configuration is handled by the tool
-                results = await search_tool.run(args={"query": "quantum computing applications"})
-
-                # Process results (only recent documents after 2020 due to the filter)
-                print(f"Found {len(results.results)} results from after 2020")
-                for result in results.results:
-                    print(f"Score: {result.score}")
-                    print(f"Title: {result.content.get('title', 'No title')}")
-                    print(f"Year: {result.content.get('year', 'Unknown')}")
-                    print("-" * 50)
-
-
-            if __name__ == "__main__":
-                asyncio.run(vectorsearch_example())
-
-        Integration with AutoGen Agents:
-
-        .. code-block:: python
-
-            import asyncio
-            from autogen import AssistantAgent, UserProxyAgent, config_list_from_json
-            from autogen_ext.tools.azure import AzureAISearchTool
-
-
-            async def main():
-                # Create search tool
-                search_tool = AzureAISearchTool.create_semantic_search(
-                    name="document_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index-name",
-                    credential={"api_key": "your-search-api-key"},
-                    semantic_config_name="default",
-                )
-
-                # Configure agents
-                config_list = config_list_from_json("path/to/your/config.json")
-                llm_config = {"config_list": config_list, "tools": [search_tool]}
-
-                # Create agents
-                assistant = AssistantAgent(
-                    name="research_assistant",
-                    llm_config=llm_config,
-                    system_message="You are a research assistant with access to a document search tool.",
-                )
-
-                user_proxy = UserProxyAgent(name="user", human_input_mode="TERMINATE", max_consecutive_auto_reply=10)
-
-                # Start the conversation
-                await user_proxy.initiate_chat(assistant, message="Find information about renewable energy technologies")
-
-
-            if __name__ == "__main__":
-                asyncio.run(main())
-
-    Args:
-        name (str): Name for the tool instance.
-        endpoint (str): The full URL of your Azure AI Search service.
-        index_name (str): Name of the search index to query.
-        credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Azure credential for authentication.
-        description (Optional[str]): Optional description explaining the tool's purpose.
-        api_version (str): Azure AI Search API version to use.
-        semantic_config_name (Optional[str]): Name of the semantic configuration.
-        query_type (str): The type of search to perform ("simple", "full", "semantic", "vector").
-        search_fields (Optional[List[str]]): Fields to search within documents.
-        select_fields (Optional[List[str]]): Fields to return in search results.
-        vector_fields (Optional[List[str]]): Fields to use for vector search.
-        top (Optional[int]): Maximum number of results to return.
-        filter (Optional[str]): OData filter expression to refine search results
-        enable_caching (bool): Whether to cache search results
-        cache_ttl_seconds (int): How long to cache results in seconds
+    You should use the factory methods to create instances for specific search types:
+    - create_keyword_search()
+    - create_full_text_search()
+    - create_vector_search()
+    - create_hybrid_search()
     """
 
     def __init__(
@@ -1077,22 +652,19 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
-        description: Optional[str] = None,
-        api_version: str = "2023-11-01",
+        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"],
         semantic_config_name: Optional[str] = None,
-        query_type: Literal["simple", "full", "semantic", "vector"] = "simple",
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         vector_fields: Optional[List[str]] = None,
-        top: Optional[int] = None,
         filter: Optional[str] = None,
-        enable_caching: bool = False,
-        cache_ttl_seconds: int = 300,
+        top: Optional[int] = 5,
+        **kwargs: Any,
     ) -> None:
         if not _allow_private_constructor.get():
             raise RuntimeError(
-                "Constructor is private. Use factory methods like create_simple_search(), "
-                "create_semantic_search(), create_vector_search(), or load_component() instead."
+                "Constructor is private. Use factory methods like create_keyword_search(), "
+                "create_vector_search(), or create_hybrid_search() instead."
             )
 
         super().__init__(
@@ -1100,17 +672,14 @@ class AzureAISearchTool(BaseAzureAISearchTool):
             endpoint=endpoint,
             index_name=index_name,
             credential=credential,
-            description=description,
-            api_version=api_version,
-            semantic_config_name=semantic_config_name,
             query_type=query_type,
+            semantic_config_name=semantic_config_name,
             search_fields=search_fields,
             select_fields=select_fields,
             vector_fields=vector_fields,
-            top=top,
             filter=filter,
-            enable_caching=enable_caching,
-            cache_ttl_seconds=cache_ttl_seconds,
+            top=top,
+            **kwargs,
         )
 
     @classmethod
@@ -1146,7 +715,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
             config = model.config
 
             query_type_str = config.get("query_type", "simple")
-            query_type: Literal["simple", "full", "semantic", "vector"]
+            query_type: Literal["simple", "full", "semantic", "vector", "hybrid"]
 
             if query_type_str == "simple":
                 query_type = "simple"
@@ -1162,9 +731,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                 endpoint=config.get("endpoint", ""),
                 index_name=config.get("index_name", ""),
                 credential=config.get("credential", {}),
-                description=config.get("description"),
-                api_version=config.get("api_version", "2023-11-01"),
                 query_type=query_type,
+                semantic_config_name=config.get("semantic_config_name"),
                 search_fields=config.get("search_fields"),
                 select_fields=config.get("select_fields"),
                 vector_fields=config.get("vector_fields"),
@@ -1181,45 +749,17 @@ class AzureAISearchTool(BaseAzureAISearchTool):
             _allow_private_constructor.reset(token)
 
     @classmethod
-    def create_simple_search(
-        cls,
-        name: str,
-        endpoint: str,
-        index_name: str,
-        credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
-        **kwargs: Any,
-    ) -> "AzureAISearchTool":
-        """Factory method to create a simple search tool.
-
-        This is the easiest way to get started with Azure AI Search in AutoGen.
-        Simple search uses basic keyword matching for straightforward queries.
+    def _validate_common_params(cls, name: str, endpoint: str, index_name: str, credential: Any) -> None:
+        """Validate common parameters across all factory methods.
 
         Args:
-            name (str): The name of the tool
-            endpoint (str): The URL of your Azure AI Search service
-            index_name (str): The name of the search index
-            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
-            **kwargs (Any): Additional configuration options
+            name: Tool name
+            endpoint: Azure Search endpoint URL
+            index_name: Name of search index
+            credential: Authentication credentials
 
-        Returns:
-            An initialized simple search tool
-
-        Example:
-            .. code-block:: python
-
-                from autogen_ext.tools.azure import AzureAISearchTool
-
-                # Create a simple search tool
-                search_tool = AzureAISearchTool.create_simple_search(
-                    name="simple_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index",
-                    credential={"api_key": "your-api-key"},
-                )
-
-                # Run a search
-                result = await search_tool.run(args={"query": "machine learning"})
-                print(f"Found {len(result.results)} results")
+        Raises:
+            ValueError: If any parameter is invalid
         """
         if not endpoint or not endpoint.startswith(("http://", "https://")):
             raise ValueError("endpoint must be a valid URL starting with http:// or https://")
@@ -1232,6 +772,67 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         if not credential:
             raise ValueError("credential cannot be None")
+
+    @classmethod
+    def create_keyword_search(
+        cls,
+        name: str,
+        endpoint: str,
+        index_name: str,
+        credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
+        search_fields: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
+        filter: Optional[str] = None,
+        top: Optional[int] = 5,
+        **kwargs: Any,
+    ) -> "AzureAISearchTool":
+        """Factory method to create a keyword search tool.
+
+        Keyword search performs traditional text-based search, good for finding documents
+        containing specific terms or exact matches to your query.
+
+        Args:
+            name (str): The name of the tool
+            endpoint (str): The URL of your Azure AI Search service
+            index_name (str): The name of the search index
+            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
+            search_fields (Optional[List[str]]): Fields to search within for text search
+            select_fields (Optional[List[str]]): Fields to include in results
+            filter (Optional[str]): OData filter expression to filter results
+            top (Optional[int]): Maximum number of results to return
+            **kwargs (Any): Additional configuration options
+
+        Returns:
+            An initialized keyword search tool
+
+        Example Usage:
+            .. code-block:: python
+
+                from autogen import Agent, UserProxyAgent
+                from autogen_ext.tools.azure import AzureAISearchTool
+                from azure.core.credentials import AzureKeyCredential
+
+                # Create a keyword search tool
+                keyword_search = AzureAISearchTool.create_keyword_search(
+                    name="keyword_search",
+                    endpoint="https://your-service.search.windows.net",
+                    index_name="your-index",
+                    credential=AzureKeyCredential("your-api-key"),
+                    search_fields=["title", "content"],
+                    select_fields=["id", "title", "content", "category"],
+                    top=10,
+                )
+
+                # Create an assistant with the search tool
+                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[keyword_search])
+
+                # Create a user proxy agent
+                user = UserProxyAgent("user")
+
+                # Start a conversation
+                user.initiate_chat(assistant, message="Find information about machine learning algorithms")
+        """
+        cls._validate_common_params(name, endpoint, index_name, credential)
 
         token = _allow_private_constructor.set(True)
         try:
@@ -1241,13 +842,17 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                 index_name=index_name,
                 credential=credential,
                 query_type="simple",
+                search_fields=search_fields,
+                select_fields=select_fields,
+                filter=filter,
+                top=top,
                 **kwargs,
             )
         finally:
             _allow_private_constructor.reset(token)
 
     @classmethod
-    def create_full_search(
+    def create_full_text_search(
         cls,
         name: str,
         endpoint: str,
@@ -1255,150 +860,82 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
+        filter: Optional[str] = None,
+        top: Optional[int] = 5,
+        semantic_config_name: Optional[str] = None,
+        use_semantic_ranking: bool = False,
         **kwargs: Any,
     ) -> "AzureAISearchTool":
-        """Factory method to create a full text search tool.
+        """Factory method to create a full-text search tool.
 
-        Full text search provides enhanced text analysis with Azure's advanced text
-        processing capabilities, including word breaking, stemming, and relevance scoring.
-        This provides more sophisticated keyword matching than simple search.
+        Full-text search uses advanced text analysis (stemming, lemmatization, etc.)
+        to provide more comprehensive text matching than basic keyword search.
 
         Args:
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
             credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
-            search_fields (Optional[List[str]]): Optional list of fields to search within
-            select_fields (Optional[List[str]]): Optional list of fields to return in the results
+            search_fields (Optional[List[str]]): Fields to search within
+            select_fields (Optional[List[str]]): Fields to include in results
+            filter (Optional[str]): OData filter expression to filter results
+            top (Optional[int]): Maximum number of results to return
+            semantic_config_name (Optional[str]): Semantic configuration name for enhanced results
+            use_semantic_ranking (bool): Whether to use semantic ranking
             **kwargs (Any): Additional configuration options
 
         Returns:
-            An initialized full text search tool
+            An initialized full-text search tool
 
-        Example:
+        Example Usage:
             .. code-block:: python
 
-                from azure.core.credentials import AzureKeyCredential
+                from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
+                from azure.core.credentials import AzureKeyCredential
 
-                # Create a full text search tool
-                full_search = AzureAISearchTool.create_full_search(
-                    name="full_search",
+                # Create a full-text search tool
+                full_text_search = AzureAISearchTool.create_full_text_search(
+                    name="document_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
                     search_fields=["title", "content"],
-                    select_fields=["id", "title", "content", "url"],
+                    select_fields=["title", "content", "category", "url"],
+                    top=10,
                 )
 
-                # Perform a full text search
-                results = await full_search.run(args={"query": "advanced neural network architectures"})
+                # Create an assistant with the search tool
+                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[full_text_search])
 
-                # Process results
-                for item in results.results:
-                    print(f"Score: {item.score}, Title: {item.content.get('title', 'No title')}")
+                # Create a user proxy agent
+                user = UserProxyAgent("user")
+
+                # Start a conversation
+                user.initiate_chat(assistant, message="Find information about natural language processing techniques")
         """
-        if not endpoint or not endpoint.startswith(("http://", "https://")):
-            raise ValueError("endpoint must be a valid URL starting with http:// or https://")
+        cls._validate_common_params(name, endpoint, index_name, credential)
 
-        if not index_name:
-            raise ValueError("index_name cannot be empty")
-
-        if not name:
-            raise ValueError("name cannot be empty")
-
-        if not credential:
-            raise ValueError("credential cannot be None")
+        if use_semantic_ranking and not semantic_config_name:
+            raise ValueError("semantic_config_name must be specified when use_semantic_ranking is True") from None
 
         token = _allow_private_constructor.set(True)
         try:
+            query_type = cast(
+                Literal["simple", "full", "semantic", "vector", "hybrid"],
+                "semantic" if use_semantic_ranking else "full",
+            )
+
             return cls(
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
                 credential=credential,
-                query_type="full",
+                query_type=query_type,
                 search_fields=search_fields,
                 select_fields=select_fields,
-                **kwargs,
-            )
-        finally:
-            _allow_private_constructor.reset(token)
-
-    @classmethod
-    def create_semantic_search(
-        cls,
-        name: str,
-        endpoint: str,
-        index_name: str,
-        credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
-        semantic_config_name: str,
-        **kwargs: Any,
-    ) -> "AzureAISearchTool":
-        """Factory method to create a semantic search tool.
-
-        Semantic search uses natural language understanding to return results based on the
-        meaning of a query rather than just keyword matching. It provides more relevant results
-        for natural language queries.
-
-        Args:
-            name (str): The name of the tool
-            endpoint (str): The URL of your Azure AI Search service
-            index_name (str): The name of the search index
-            credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
-            semantic_config_name (str): The name of the semantic configuration to use
-            **kwargs (Any): Additional configuration options
-
-        Returns:
-            An initialized semantic search tool
-
-        Example:
-            .. code-block:: python
-
-                from azure.core.credentials import AzureKeyCredential
-                from autogen_ext.tools.azure import AzureAISearchTool
-
-                # Create a semantic search tool
-                semantic_search_tool = AzureAISearchTool.create_semantic_search(
-                    name="semantic_search",
-                    endpoint="https://your-search-service.search.windows.net",
-                    index_name="your-index",
-                    credential=AzureKeyCredential("your-api-key"),
-                    semantic_config_name="default",
-                )
-
-                # Perform a semantic search
-                try:
-                    result = await semantic_search_tool.run(args={"query": "latest advances in neural networks"})
-                    print(f"Found {len(result.results)} results")
-                except Exception as e:
-                    print(f"Search failed: {e}")
-        """
-        if not endpoint or not endpoint.startswith(("http://", "https://")):
-            raise ValueError("endpoint must be a valid URL starting with http:// or https://")
-
-        if not index_name:
-            raise ValueError("index_name cannot be empty")
-
-        if not name:
-            raise ValueError("name cannot be empty")
-
-        if not credential:
-            raise ValueError("credential cannot be None")
-
-        if not semantic_config_name:
-            raise ValueError(
-                "semantic_config_name cannot be empty - it must reference a semantic configuration in your Azure AI Search index"
-            )
-
-        token = _allow_private_constructor.set(True)
-        try:
-            return cls(
-                name=name,
-                endpoint=endpoint,
-                index_name=index_name,
-                credential=credential,
-                query_type="semantic",
+                filter=filter,
+                top=top,
                 semantic_config_name=semantic_config_name,
                 **kwargs,
             )
@@ -1413,13 +950,15 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         vector_fields: List[str],
+        select_fields: Optional[List[str]] = None,
+        filter: Optional[str] = None,
+        top: Optional[int] = 5,
         **kwargs: Any,
     ) -> "AzureAISearchTool":
         """Factory method to create a vector search tool.
 
         Vector search uses embedding vectors to find semantically similar content, enabling
-        the discovery of related information even when different terminology is used. This
-        provides powerful similarity-based search capabilities.
+        the discovery of related information even when different terminology is used.
 
         Args:
             name (str): The name of the tool
@@ -1427,40 +966,43 @@ class AzureAISearchTool(BaseAzureAISearchTool):
             index_name (str): The name of the search index
             credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
             vector_fields (List[str]): Fields containing vector embeddings for similarity search
+            select_fields (Optional[List[str]]): Fields to include in results
+            filter (Optional[str]): OData filter expression to filter results
+            top (Optional[int]): Maximum number of results to return
             **kwargs (Any): Additional configuration options
 
         Returns:
             An initialized vector search tool
 
-        Example:
+        Example Usage:
             .. code-block:: python
 
-                from azure.core.credentials import AzureKeyCredential
+                from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
+                from azure.core.credentials import AzureKeyCredential
 
                 # Create a vector search tool
-                vector_search_tool = AzureAISearchTool.create_vector_search(
+                vector_search = AzureAISearchTool.create_vector_search(
                     name="vector_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
                     credential=AzureKeyCredential("your-api-key"),
                     vector_fields=["embedding"],
+                    select_fields=["title", "content", "url"],
+                    top=5,
                 )
 
-                # Perform a vector search with a text query
-                result = await vector_search_tool.run(args={"query": "quantum computing algorithms"})
+                # Create an assistant with the vector search tool
+                assistant = Agent("assistant", llm_config={"model": "gpt-4"}, tools=[vector_search])
+
+                # Create a user proxy agent
+                user_proxy = UserProxyAgent("user")
+
+                # Start a conversation
+                user_proxy.initiate_chat(assistant, message="Find information similar to quantum computing algorithms")
+
         """
-        if not endpoint or not endpoint.startswith(("http://", "https://")):
-            raise ValueError("endpoint must be a valid URL starting with http:// or https://")
-
-        if not index_name:
-            raise ValueError("index_name cannot be empty")
-
-        if not name:
-            raise ValueError("name cannot be empty")
-
-        if not credential:
-            raise ValueError("credential cannot be None")
+        cls._validate_common_params(name, endpoint, index_name, credential)
 
         if not vector_fields or len(vector_fields) == 0:
             raise ValueError("vector_fields must contain at least one field name")
@@ -1474,6 +1016,9 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                 credential=credential,
                 query_type="vector",
                 vector_fields=vector_fields,
+                select_fields=select_fields,
+                filter=filter,
+                top=top,
                 **kwargs,
             )
         finally:
@@ -1486,131 +1031,88 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
-        semantic_config_name: str,
         vector_fields: List[str],
+        search_fields: Optional[List[str]] = None,
+        select_fields: Optional[List[str]] = None,
+        filter: Optional[str] = None,
+        top: Optional[int] = 5,
+        semantic_config_name: Optional[str] = None,
         **kwargs: Any,
     ) -> "AzureAISearchTool":
         """Factory method to create a hybrid search tool.
 
-        Hybrid search combines the strengths of semantic ranking and vector similarity search
-        to provide more comprehensive search results. Note that this method is a convenience wrapper
-        around the create_semantic_search method with vector_fields added - it doesn't create a
-        distinct query type but rather configures semantic search to also leverage vector capabilities.
+        Hybrid search combines keyword matching and vector similarity search
+        to provide more comprehensive search results, leveraging the strengths of both approaches.
 
         Args:
             name (str): The name of the tool
             endpoint (str): The URL of your Azure AI Search service
             index_name (str): The name of the search index
             credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Authentication credentials
-            semantic_config_name (str): The name of the semantic configuration to use
             vector_fields (List[str]): Fields containing vector embeddings for similarity search
+            search_fields (Optional[List[str]]): Fields to search within for text search
+            select_fields (Optional[List[str]]): Fields to include in results
+            filter (Optional[str]): OData filter expression to filter results
+            top (Optional[int]): Maximum number of results to return
+            semantic_config_name (Optional[str]): Semantic configuration name for enhanced results
             **kwargs (Any): Additional configuration options
 
         Returns:
-            An initialized hybrid search tool combining semantic and vector search
+            An initialized hybrid search tool
 
-        Example:
+        Example Usage:
             .. code-block:: python
 
-                from azure.core.credentials import AzureKeyCredential
+                from autogen import Agent, UserProxyAgent
                 from autogen_ext.tools.azure import AzureAISearchTool
+                from azure.core.credentials import AzureKeyCredential
 
                 # Create a hybrid search tool
                 hybrid_search = AzureAISearchTool.create_hybrid_search(
                     name="hybrid_search",
                     endpoint="https://your-search-service.search.windows.net",
                     index_name="your-index",
-                    credential=AzureKeyCredential("your-search-api-key"),
-                    semantic_config_name="default",
+                    credential=AzureKeyCredential("your-api-key"),
                     vector_fields=["embedding_field"],
+                    search_fields=["title", "content"],
+                    select_fields=["title", "content", "url", "date"],
+                    top=10,
                 )
 
-                # Simple interface at query time - complex configuration is handled by the tool
-                results = await hybrid_search.run(args={"query": "advanced machine learning techniques"})
+                # Create an agent with the search tool
+                assistant = Agent("researcher", llm_config={"model": "gpt-4", "temperature": 0}, tools=[hybrid_search])
 
-                # Process results (benefits from both semantic and vector search capabilities)
-                for item in results.results:
-                    print(f"Score: {item.score}, Title: {item.content.get('title', 'No title')}")
+                # Create a user proxy agent
+                user = UserProxyAgent("user")
+
+                # Start a conversation using the hybrid search
+                user.initiate_chat(assistant, message="Find the latest research on advanced machine learning techniques")
         """
+        cls._validate_common_params(name, endpoint, index_name, credential)
+
         if not vector_fields or len(vector_fields) == 0:
-            raise ValueError("vector_fields must contain at least one field name for hybrid search")
+            raise ValueError("vector_fields must contain at least one field name")
 
         token = _allow_private_constructor.set(True)
         try:
-            return cls.create_semantic_search(
-                name=name,
-                endpoint=endpoint,
-                index_name=index_name,
-                credential=credential,
-                semantic_config_name=semantic_config_name,
-                vector_fields=vector_fields,
-                **kwargs,
+            query_type = cast(
+                Literal["simple", "full", "semantic", "vector", "hybrid"],
+                "semantic" if semantic_config_name else "simple",
             )
-        finally:
-            _allow_private_constructor.reset(token)
-
-    @classmethod
-    def from_env(
-        cls,
-        name: str,
-        env_prefix: str = "AZURE_SEARCH",
-        **kwargs: Any,
-    ) -> "AzureAISearchTool":
-        """Create a search tool instance from environment variables."""
-        token = _allow_private_constructor.set(True)
-        try:
-            import os
-
-            endpoint = os.getenv(f"{env_prefix}_ENDPOINT")
-            index_name = os.getenv(f"{env_prefix}_INDEX_NAME")
-            api_key = os.getenv(f"{env_prefix}_API_KEY")
-
-            if not endpoint or not index_name or not api_key:
-                raise ValueError(
-                    f"Missing required environment variables. Please set {env_prefix}_ENDPOINT, "
-                    f"{env_prefix}_INDEX_NAME, and {env_prefix}_API_KEY."
-                )
-
-            api_version = os.getenv(f"{env_prefix}_API_VERSION", "2023-11-01")
-            query_type_str = os.getenv(f"{env_prefix}_QUERY_TYPE", "simple")
-
-            valid_query_types = ["simple", "full", "semantic", "vector"]
-            if query_type_str not in valid_query_types:
-                raise ValueError(
-                    f"Invalid query type: {query_type_str}. Must be one of: {', '.join(valid_query_types)}"
-                )
-
-            query_type: Literal["simple", "full", "semantic", "vector"]
-            if query_type_str == "simple":
-                query_type = "simple"
-            elif query_type_str == "full":
-                query_type = "full"
-            elif query_type_str == "semantic":
-                query_type = "semantic"
-            else:
-                query_type = "vector"
-
-            credential = {"api_key": api_key}
-
-            vector_fields = None
-            vector_fields_str = os.getenv(f"{env_prefix}_VECTOR_FIELDS")
-            if vector_fields_str:
-                vector_fields = vector_fields_str.split(",")
-
-            semantic_config_name = os.getenv(f"{env_prefix}_SEMANTIC_CONFIG")
-
-            additional_params = kwargs.copy()
 
             return cls(
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
                 credential=credential,
-                api_version=api_version,
                 query_type=query_type,
+                search_fields=search_fields,
+                select_fields=select_fields,
                 vector_fields=vector_fields,
+                filter=filter,
+                top=top,
                 semantic_config_name=semantic_config_name,
-                **additional_params,
+                **kwargs,
             )
         finally:
             _allow_private_constructor.reset(token)

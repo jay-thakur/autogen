@@ -1,5 +1,3 @@
-"""Azure AI Search tool for AutoGen."""
-
 from ._ai_search import (
     AzureAISearchTool,
     BaseAzureAISearchTool,
