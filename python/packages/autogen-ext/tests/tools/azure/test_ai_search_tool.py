@@ -96,7 +96,7 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         self._index_name = kwargs.get("index_name", "")
         self._api_version = kwargs.get("api_version", "")
         self._credential = kwargs.get("credential", None)
-        self._query_type = kwargs.get("query_type", "simple")
+        self._query_type = kwargs.get("query_type", "keyword")
         self._search_fields = kwargs.get("search_fields", [])
         self._select_fields = kwargs.get("select_fields", [])
         self._vector_fields = kwargs.get("vector_fields", [])
@@ -203,7 +203,7 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
 
         kwargs: Dict[str, Any] = {}
 
-        if self._query_type == "semantic" and self._semantic_config_name:
+        if self._query_type == "fulltext" and self._semantic_config_name:
             kwargs["query_type"] = "semantic"
             kwargs["semantic_configuration_name"] = self._semantic_config_name
         elif self._query_type == "hybrid":
@@ -385,7 +385,7 @@ def test_tool_properties(test_config: ComponentModel) -> None:
         assert tool.search_config.endpoint == "https://test-search-service.search.windows.net"
         assert tool.search_config.index_name == "test-index"
         assert tool.search_config.api_version == "2023-10-01-Preview"
-        assert tool.search_config.query_type == "simple"
+        assert tool.search_config.query_type == "keyword"
         assert tool.search_config.search_fields == ["content", "title"]
         assert tool.search_config.select_fields == ["id", "content", "title", "source"]
         assert tool.search_config.top == 5
@@ -448,7 +448,7 @@ async def test_keyword_search(keyword_config: ComponentModel) -> None:
             mock_client.search.assert_called_once()
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
-            assert kwargs.get("query_type") == "simple"
+            assert kwargs.get("query_type") == "simple"  # Azure SDK still uses 'simple' for keyword searches
 
 
 @pytest.mark.asyncio
@@ -562,7 +562,7 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
             "index_name": "test-index",
             "api_version": "2023-10-01-Preview",
             "credential": {"api_key": "test-key"},
-            "query_type": "semantic",
+            "query_type": "fulltext",
             "semantic_config_name": "test-semantic-config",
             "vector_fields": ["embedding"],
             "search_fields": ["content", "title"],
@@ -618,7 +618,9 @@ async def test_hybrid_search(test_config: ComponentModel) -> None:
             args, kwargs = mock_client.search.call_args
             assert args[0] == "test query"
             assert "query_type" in kwargs
-            assert kwargs["query_type"] == "semantic"
+            assert (
+                kwargs["query_type"] == "semantic"
+            )  # Azure SDK uses 'semantic' query_type for fulltext with semantic ranking
             assert "vectors" in kwargs
             assert len(getattr(result, "results", [])) == 2
             assert getattr(result.results[0], "score", 0) == 0.95

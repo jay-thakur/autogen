@@ -169,7 +169,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
         description: Optional[str] = None,
         api_version: str = "2023-11-01",
-        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"] = "simple",
+        query_type: Literal["keyword", "fulltext", "vector", "hybrid"] = "keyword",
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         vector_fields: Optional[List[str]] = None,
@@ -188,7 +188,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             credential (Union[AzureKeyCredential, TokenCredential, Dict[str, str]]): Azure credential for authentication (API key or token)
             description (Optional[str]): Optional description explaining the tool's purpose
             api_version (str): Azure AI Search API version to use
-            query_type (Literal["simple", "full", "semantic", "vector", "hybrid"]): Type of search to perform
+            query_type (Literal["keyword", "fulltext", "vector", "hybrid"]): Type of search to perform
             search_fields (Optional[List[str]]): Fields to search within documents
             select_fields (Optional[List[str]]): Fields to return in search results
             vector_fields (Optional[List[str]]): Fields to use for vector search
@@ -341,7 +341,7 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
             if self.search_config.top is not None:
                 search_options["top"] = self.search_config.top
 
-            if self.search_config.query_type == "semantic" and self.search_config.semantic_config_name is not None:
+            if self.search_config.query_type == "fulltext" and self.search_config.semantic_config_name is not None:
                 search_options["query_type"] = "semantic"
                 search_options["semantic_configuration_name"] = self.search_config.semantic_config_name
 
@@ -356,14 +356,25 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                         for field in vector_fields_list
                     ]
 
-            if cancellation_token is not None and cancellation_token.is_cancelled():
-                raise Exception("Operation cancelled")
-
             client = await self._get_client()
             results: List[SearchResult] = []
 
             async with client:
-                search_results = await client.search(text_query, **search_options)  # type: ignore
+                search_future = client.search(text_query, **search_options)  # type: ignore
+
+                if cancellation_token is not None:
+                    import asyncio
+
+                    # Using explicit type ignores to handle Azure SDK type complexity
+                    async def awaitable_wrapper():  # type: ignore # pyright: ignore[reportUnknownVariableType,reportUnknownLambdaType,reportUnknownMemberType]
+                        return await search_future  # pyright: ignore[reportUnknownVariableType]
+
+                    task = asyncio.create_task(awaitable_wrapper())  # type: ignore # pyright: ignore[reportUnknownVariableType]
+                    cancellation_token.link_future(task)  # pyright: ignore[reportUnknownArgumentType]
+                    search_results = await task  # pyright: ignore[reportUnknownVariableType]
+                else:
+                    search_results = await search_future  # pyright: ignore[reportUnknownVariableType]
+
                 async for doc in search_results:  # type: ignore
                     search_doc: Any = doc
                     doc_dict: Dict[str, Any] = {}
@@ -465,17 +476,19 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
         Returns:
             BaseAzureAISearchTool: An initialized instance of the search tool
         """
-        query_type_str = getattr(config, "query_type", "simple")
-        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"]
+        query_type_str = getattr(config, "query_type", "keyword")
 
-        if query_type_str == "simple":
-            query_type = "simple"
-        elif query_type_str == "full":
-            query_type = "full"
-        elif query_type_str == "semantic":
-            query_type = "semantic"
-        else:
-            query_type = "simple"
+        query_type_mapping = {
+            "simple": "keyword",
+            "keyword": "keyword",
+            "fulltext": "fulltext",
+            "vector": "vector",
+            "hybrid": "hybrid",
+        }
+
+        query_type = cast(
+            Literal["keyword", "fulltext", "vector", "hybrid"], query_type_mapping.get(query_type_str, "vector")
+        )
 
         openai_client_attr = getattr(config, "openai_client", None)
         if openai_client_attr is None:
@@ -563,7 +576,9 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
                 "type": "object",
                 "properties": {"query": {"type": "string", "description": "Search query text"}},
                 "required": ["query"],
+                "additionalProperties": False,
             },
+            "strict": True,
         }
 
     def return_value_as_string(self, value: SearchResults) -> str:
@@ -652,7 +667,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         endpoint: str,
         index_name: str,
         credential: Union[AzureKeyCredential, TokenCredential, Dict[str, str]],
-        query_type: Literal["simple", "full", "semantic", "vector", "hybrid"],
+        query_type: Literal["keyword", "fulltext", "vector", "hybrid"],
         semantic_config_name: Optional[str] = None,
         search_fields: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
@@ -714,17 +729,19 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
             config = model.config
 
-            query_type_str = config.get("query_type", "simple")
-            query_type: Literal["simple", "full", "semantic", "vector", "hybrid"]
+            query_type_str = config.get("query_type", "keyword")
 
-            if query_type_str == "simple":
-                query_type = "simple"
-            elif query_type_str == "full":
-                query_type = "full"
-            elif query_type_str == "semantic":
-                query_type = "semantic"
-            else:
-                query_type = "vector"
+            query_type_mapping = {
+                "simple": "keyword",
+                "keyword": "keyword",
+                "fulltext": "fulltext",
+                "vector": "vector",
+                "hybrid": "hybrid",
+            }
+
+            query_type = cast(
+                Literal["keyword", "fulltext", "vector", "hybrid"], query_type_mapping.get(query_type_str, "vector")
+            )
 
             instance = cls(
                 name=config.get("name", ""),
@@ -836,7 +853,7 @@ class AzureAISearchTool(BaseAzureAISearchTool):
                 endpoint=endpoint,
                 index_name=index_name,
                 credential=credential,
-                query_type="simple",
+                query_type="keyword",
                 search_fields=search_fields,
                 select_fields=select_fields,
                 filter=filter,
@@ -912,8 +929,8 @@ class AzureAISearchTool(BaseAzureAISearchTool):
         token = _allow_private_constructor.set(True)
         try:
             query_type = cast(
-                Literal["simple", "full", "semantic", "vector", "hybrid"],
-                "semantic" if use_semantic_ranking else "full",
+                Literal["keyword", "fulltext", "vector", "hybrid"],
+                "fulltext",
             )
 
             return cls(
@@ -1026,8 +1043,11 @@ class AzureAISearchTool(BaseAzureAISearchTool):
     ) -> "AzureAISearchTool":
         """Factory method to create a hybrid search tool.
 
-        Hybrid search combines keyword matching and vector similarity search
-        to provide more comprehensive search results, leveraging the strengths of both approaches.
+        Hybrid search combines text search (keyword or semantic) with vector similarity
+        search to provide more comprehensive results.
+
+        This method doesn't use a separate "hybrid" type but instead configures either
+        a "keyword" or "semantic" text search and combines it with vector search.
 
         Args:
             name (str): The name of the tool
@@ -1075,17 +1095,14 @@ class AzureAISearchTool(BaseAzureAISearchTool):
 
         token = _allow_private_constructor.set(True)
         try:
-            query_type = cast(
-                Literal["simple", "full", "semantic", "vector", "hybrid"],
-                "semantic" if semantic_config_name else "simple",
-            )
+            text_query_type = cast(Literal["keyword", "fulltext", "vector", "hybrid"], "hybrid")
 
             return cls(
                 name=name,
                 endpoint=endpoint,
                 index_name=index_name,
                 credential=credential,
-                query_type=query_type,
+                query_type=text_query_type,
                 search_fields=search_fields,
                 select_fields=select_fields,
                 vector_fields=vector_fields,
