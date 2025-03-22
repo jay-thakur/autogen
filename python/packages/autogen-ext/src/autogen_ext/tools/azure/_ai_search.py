@@ -603,42 +603,6 @@ class BaseAzureAISearchTool(BaseTool[SearchQuery, SearchResults], ABC):
 
         return "\n".join(result_strings)
 
-    def _format_result_for_display(self, result: SearchResults) -> str:
-        """Format search results for display.
-
-        Args:
-            result: The search results to format
-
-        Returns:
-            A formatted JSON string representation of the results
-        """
-        import json
-
-        results_dict = {
-            "count": len(result.results),
-            "results": [{"score": r.score, "content": r.content, "metadata": r.metadata} for r in result.results],
-        }
-
-        return json.dumps(results_dict, indent=2)
-
-    def _convert_to_string(self, value: SearchResults) -> str:
-        """Convert search results to a string representation.
-
-        Args:
-            value: The search results to convert
-
-        Returns:
-            A JSON string representation of the results
-        """
-        import json
-
-        results_dict = {
-            "count": len(value.results),
-            "results": [{"score": r.score, "content": r.content, "metadata": r.metadata} for r in value.results],
-        }
-
-        return json.dumps(results_dict, indent=2)
-
 
 _allow_private_constructor = ContextVar("_allow_private_constructor", default=False)
 
