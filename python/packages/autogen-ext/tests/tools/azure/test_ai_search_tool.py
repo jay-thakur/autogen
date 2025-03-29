@@ -1,5 +1,6 @@
 """Tests for the Azure AI Search tool."""
 
+import asyncio
 import importlib.util
 import os
 import sys
@@ -185,10 +186,8 @@ class MockAzureAISearchTool(BaseAzureAISearchTool):  # type: ignore
         elif hasattr(query, "dict"):
             query_dict = query.dict()
         elif isinstance(query, str):
-            # Handle string queries
             query_dict = {"query": query}
         elif hasattr(query, "__iter__") and not isinstance(query, (str, bytes)):
-            # Only convert to dict if it's a non-string iterable
             query_dict = dict(query)
 
         query_text = query_dict.get("query", "")
@@ -681,3 +680,50 @@ async def test_error_handling_authentication() -> None:
 
             assert "Authentication failed" in str(excinfo.value)
             assert "check your API key" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_actual_implementation_cancellation() -> None:
+    """Test that the actual implementation correctly handles cancellation."""
+    tool = MockAzureAISearchTool.load_component(
+        ComponentModel(
+            provider="autogen_ext.tools.azure.test_ai_search_tool.MockAzureAISearchTool",
+            config={
+                "name": "test_search",
+                "endpoint": "https://test.search.windows.net",
+                "index_name": "test-index",
+                "credential": {"api_key": "test-key"},
+            },
+        )
+    )
+
+    from autogen_ext.tools.azure._ai_search import BaseAzureAISearchTool
+
+    async def patched_run(query: Any, cancellation_token: Optional[CancellationToken] = None) -> Any:
+        method = BaseAzureAISearchTool.run
+        return await method(tool, query, cancellation_token)
+
+    tool.run = patched_run  # type: ignore
+
+    class MockSearchResults:
+        def __aiter__(self) -> "MockSearchResults":
+            return self
+
+        async def __anext__(self) -> None:
+            raise StopAsyncIteration
+
+    async def delayed_search_coroutine() -> MockSearchResults:
+        await asyncio.sleep(0.1)
+        return MockSearchResults()
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.search = MagicMock(return_value=delayed_search_coroutine())
+
+    with patch.object(tool, "_get_client", new=AsyncMock(return_value=mock_client)):
+        token = CancellationToken()
+        token.cancel()
+
+        with pytest.raises(Exception, match="Operation cancelled"):
+            await tool.run("test query", cancellation_token=token)
